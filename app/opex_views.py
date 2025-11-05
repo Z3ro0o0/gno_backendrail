@@ -18,7 +18,7 @@ class OPEXView(APIView):
             
             # Helper function to get account breakdown for a given account type
             def get_account_breakdown(account_type):
-                records = TruckingAccount.objects.filter(account_type=account_type)
+                records = TruckingAccount.objects.filter(account_type__name=account_type)
                 account_totals = defaultdict(float)
                 
                 for record in records:

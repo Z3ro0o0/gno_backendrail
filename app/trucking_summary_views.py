@@ -21,8 +21,8 @@ class TruckingDriversSummaryView(APIView):
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
             
-            # Base queryset
-            queryset = TruckingAccount.objects.all()
+            # Base queryset with related objects
+            queryset = TruckingAccount.objects.select_related('truck', 'driver', 'route').all()
             
             # Apply date filters if provided
             if start_date:
@@ -62,8 +62,8 @@ class TruckingDriversSummaryView(APIView):
                 'trucks': set()
             })
             
-            # Get all trucking accounts ordered by date, plate_number
-            accounts = queryset.order_by('date', 'plate_number', 'id')
+            # Get all trucking accounts ordered by date, truck plate_number
+            accounts = queryset.order_by('date', 'truck__plate_number', 'id')
             
             # Track entries for Strike logic
             entry_tracker = defaultdict(list)  # Key: (date, plate_number)
@@ -75,8 +75,11 @@ class TruckingDriversSummaryView(APIView):
                 driver = account.driver
                 amount = abs(float(account.credit)) if float(account.credit) != 0 else abs(float(account.debit))
                 
+                # Get plate_number from truck FK
+                plate = account.truck.plate_number if account.truck else None
+                
                 # Track entry for Strike logic
-                key = (str(account.date), account.plate_number)
+                key = (str(account.date), plate or '')
                 entry_tracker[key].append({
                     'account': account,
                     'amount': amount,
@@ -134,9 +137,10 @@ class TruckingDriversSummaryView(APIView):
                     drivers_summary[driver]['total_amount'] += Decimal(str(amount))
                     
                     if account.route:
-                        drivers_summary[driver]['routes'].add(account.route)
-                    if account.plate_number:
-                        drivers_summary[driver]['trucks'].add(account.plate_number)
+                        route_name = account.route.name if hasattr(account.route, 'name') else account.route
+                        drivers_summary[driver]['routes'].add(route_name)
+                    if account.truck and account.truck.plate_number:
+                        drivers_summary[driver]['trucks'].add(account.truck.plate_number)
             
             # Convert to list and format
             result = []
@@ -176,8 +180,8 @@ class TruckingRevenueStreamsView(APIView):
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
             
-            # Base queryset
-            queryset = TruckingAccount.objects.all()
+            # Base queryset with related objects
+            queryset = TruckingAccount.objects.select_related('truck', 'driver', 'route').all()
             
             # Apply date filters if provided
             if start_date:
@@ -195,7 +199,7 @@ class TruckingRevenueStreamsView(APIView):
             
             if end_date:
                 try:
-                    end_date_obj = datetime.strptime(end_date, '%Y-%m-d').date()
+                    end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
                 except ValueError:
                     try:
                         end_date_obj = datetime.strptime(end_date, '%m/%d/%Y').date()
@@ -217,8 +221,8 @@ class TruckingRevenueStreamsView(APIView):
                 'trucks': set()
             })
             
-            # Get all trucking accounts ordered by date, plate_number
-            accounts = queryset.order_by('date', 'plate_number', 'id')
+            # Get all trucking accounts ordered by date, truck plate_number
+            accounts = queryset.order_by('date', 'truck__plate_number', 'id')
             
             # Track entries for Strike logic
             entry_tracker = defaultdict(list)  # Key: (date, plate_number)
@@ -230,8 +234,11 @@ class TruckingRevenueStreamsView(APIView):
                 route = account.route
                 amount = abs(float(account.credit)) if float(account.credit) != 0 else abs(float(account.debit))
                 
+                # Get plate_number from truck FK
+                plate = account.truck.plate_number if account.truck else None
+                
                 # Track entry for Strike logic
-                key = (str(account.date), account.plate_number)
+                key = (str(account.date), plate or '')
                 entry_tracker[key].append({
                     'account': account,
                     'amount': amount,
@@ -289,9 +296,10 @@ class TruckingRevenueStreamsView(APIView):
                     revenue_streams[route]['total_revenue'] += Decimal(str(amount))
                     
                     if account.driver:
-                        revenue_streams[route]['drivers'].add(account.driver)
-                    if account.plate_number:
-                        revenue_streams[route]['trucks'].add(account.plate_number)
+                        driver_name = account.driver.name if hasattr(account.driver, 'name') else account.driver
+                        revenue_streams[route]['drivers'].add(driver_name)
+                    if account.truck and account.truck.plate_number:
+                        revenue_streams[route]['trucks'].add(account.truck.plate_number)
             
             # Convert to list and format
             result = []
@@ -331,8 +339,8 @@ class TruckingAccountsSummaryView(APIView):
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
             
-            # Base queryset
-            queryset = TruckingAccount.objects.all()
+            # Base queryset with related objects
+            queryset = TruckingAccount.objects.select_related('truck', 'truck__truck_type').all()
             
             # Apply date filters if provided
             if start_date:
@@ -374,7 +382,8 @@ class TruckingAccountsSummaryView(APIView):
             
             for account in queryset:
                 account_type = account.account_type or 'Unknown'
-                truck_type = account.truck_type or 'Unknown'
+                # Get truck_type from truck FK
+                truck_type = account.truck.truck_type.name if (account.truck and account.truck.truck_type) else 'Unknown'
                 
                 accounts_summary[account_type][truck_type]['account_type'] = account_type
                 accounts_summary[account_type][truck_type]['truck_type'] = truck_type
@@ -383,8 +392,8 @@ class TruckingAccountsSummaryView(APIView):
                 accounts_summary[account_type][truck_type]['total_final'] += Decimal(str(account.final_total))
                 accounts_summary[account_type][truck_type]['count'] += 1
                 
-                if account.plate_number:
-                    accounts_summary[account_type][truck_type]['trucks'].add(account.plate_number)
+                if account.truck and account.truck.plate_number:
+                    accounts_summary[account_type][truck_type]['trucks'].add(account.truck.plate_number)
             
             # Convert to list and format
             result = []
@@ -427,8 +436,8 @@ class TruckingTripsSummaryView(APIView):
             end_date = request.query_params.get('end_date')
             plate_number = request.query_params.get('plate_number')
             
-            # Base queryset
-            queryset = TruckingAccount.objects.all()
+            # Base queryset with related objects
+            queryset = TruckingAccount.objects.select_related('truck', 'driver', 'route').all()
             
             # Apply date filters if provided
             if start_date:
@@ -457,9 +466,9 @@ class TruckingTripsSummaryView(APIView):
                         )
                 queryset = queryset.filter(date__lte=end_date_obj)
             
-            # Apply plate_number filter if provided
+            # Apply plate_number filter if provided (through truck FK)
             if plate_number:
-                queryset = queryset.filter(plate_number=plate_number)
+                queryset = queryset.filter(truck__plate_number=plate_number)
             
             # Group by date and plate_number (1 day = 1 trip per truck)
             trips_summary = defaultdict(lambda: {
@@ -473,20 +482,22 @@ class TruckingTripsSummaryView(APIView):
                 'trip_count': 0
             })
             
-            # Get all trucking accounts ordered by date, plate_number
-            accounts = queryset.order_by('date', 'plate_number', 'id')
+            # Get all trucking accounts ordered by date, truck plate_number
+            accounts = queryset.order_by('date', 'truck__plate_number', 'id')
             
             # Track entries for Strike logic
             entry_tracker = defaultdict(list)  # Key: (date, plate_number)
             
             for account in accounts:
-                if not account.plate_number:
+                # Get plate_number from truck FK
+                plate = account.truck.plate_number if account.truck else None
+                if not plate:
                     continue
                 
                 amount = abs(float(account.credit)) if float(account.credit) != 0 else abs(float(account.debit))
                 
                 # Track entry for Strike logic
-                key = (str(account.date), account.plate_number)
+                key = (str(account.date), plate)
                 entry_tracker[key].append({
                     'account': account,
                     'amount': amount
@@ -501,16 +512,21 @@ class TruckingTripsSummaryView(APIView):
                     account = entry['account']
                     amount = entry['amount']
                     
+                    # Get plate_number from truck FK
+                    plate_num = account.truck.plate_number if account.truck else ''
+                    
                     # Update trip summary
                     trips_summary[trip_key]['date'] = str(account.date)
-                    trips_summary[trip_key]['plate_number'] = account.plate_number
+                    trips_summary[trip_key]['plate_number'] = plate_num
                     trips_summary[trip_key]['total_amount'] += Decimal(str(amount))
                     trips_summary[trip_key]['trip_count'] = len(entries)
                     
                     if account.driver:
-                        trips_summary[trip_key]['driver'] = account.driver
+                        driver_name = account.driver.name if hasattr(account.driver, 'name') else account.driver
+                        trips_summary[trip_key]['driver'] = driver_name
                     if account.route:
-                        trips_summary[trip_key]['routes'].add(account.route)
+                        route_name = account.route.name if hasattr(account.route, 'name') else account.route
+                        trips_summary[trip_key]['routes'].add(route_name)
                     if account.front_load:
                         trips_summary[trip_key]['front_loads'].append(account.front_load)
                     if account.back_load:

@@ -84,7 +84,7 @@ WSGI_APPLICATION = 'ong_backend.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite6',
+        'NAME': BASE_DIR / 'db.sqlite8',
         # 'USER': 'postgres',
         # 'PASSWORD': 'Gwapo123',
         # 'HOST': 'localhost',

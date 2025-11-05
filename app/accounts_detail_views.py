@@ -49,8 +49,8 @@ class AccountsDetailView(APIView):
             accounts_data = {}
             
             for key, mapping in account_mappings.items():
-                # Get all records for this account type
-                records = TruckingAccount.objects.filter(account_type=mapping['account_type'])
+                # Get all records for this account type with related objects
+                records = TruckingAccount.objects.filter(account_type__name=mapping['account_type']).select_related('driver', 'route', 'truck', 'truck__truck_type')
                 
                 # Convert to the format expected by frontend
                 entries = []
@@ -81,12 +81,45 @@ class AccountsDetailView(APIView):
                             # It's already a string
                             route_data = record.route
                     
+                    # Handle truck - get plate_number, truck_type, and company from truck FK
+                    plate_number = ''
+                    truck_type = ''
+                    company = ''
+                    if record.truck:
+                        plate_number = record.truck.plate_number or ''
+                        truck_type = record.truck.truck_type.name if record.truck.truck_type else ''
+                        company = record.truck.company or ''
+                    
+                    # Handle account_type
+                    account_type_data = None
+                    if record.account_type:
+                        if hasattr(record.account_type, 'name'):
+                            account_type_data = record.account_type.name
+                        else:
+                            account_type_data = record.account_type
+                    
+                    # Handle front_load and back_load
+                    front_load_data = None
+                    if record.front_load:
+                        if hasattr(record.front_load, 'name'):
+                            front_load_data = record.front_load.name
+                        else:
+                            front_load_data = record.front_load
+                    
+                    back_load_data = None
+                    if record.back_load:
+                        if hasattr(record.back_load, 'name'):
+                            back_load_data = record.back_load.name
+                        else:
+                            back_load_data = record.back_load
+                    
                     entry = {
                         'id': record.id,
                         'account_number': record.account_number or '',
-                        'truck_type': record.truck_type or '',
-                        'account_type': record.account_type,
-                        'plate_number': record.plate_number or '',
+                        'truck_type': truck_type,
+                        'company': company,
+                        'account_type': account_type_data or '',
+                        'plate_number': plate_number,
                         'debit': float(record.debit or 0),
                         'credit': float(record.credit or 0),
                         'final_total': float(record.final_total or 0),
@@ -98,8 +131,8 @@ class AccountsDetailView(APIView):
                         'route': route_data,
                         'liters': float(record.quantity or 0) if record.quantity else None,
                         'price': float(record.price or 0) if record.price else None,
-                        'front_load': record.front_load or '',
-                        'back_load': record.back_load or '',
+                        'front_load': front_load_data or '',
+                        'back_load': back_load_data or '',
                         'quantity': float(record.quantity or 0) if record.quantity else None
                     }
                     entries.append(entry)

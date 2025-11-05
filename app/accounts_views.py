@@ -17,7 +17,7 @@ class AccountsSummaryView(APIView):
             
             # Helper function to get account summary for a given account type
             def get_account_summary(account_type, display_name, color):
-                records = TruckingAccount.objects.filter(account_type=account_type)
+                records = TruckingAccount.objects.filter(account_type__name=account_type)
                 totals = records.aggregate(
                     total_debit=Sum('debit'),
                     total_credit=Sum('credit'),
@@ -101,7 +101,7 @@ class TruckingAccountSummaryView(APIView):
             
             # Helper function to get account summary for a given account type
             def get_account_summary(account_type, display_name, color):
-                records = TruckingAccount.objects.filter(account_type=account_type)
+                records = TruckingAccount.objects.filter(account_type__name=account_type)
                 totals = records.aggregate(
                     total_debit=Sum('debit'),
                     total_credit=Sum('credit'),

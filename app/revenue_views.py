@@ -15,7 +15,7 @@ class RevenueStreamsView(APIView):
     def get(self, request):
         try:
             # Get hauling income accounts from TruckingAccount
-            hauling_accounts = TruckingAccount.objects.filter(account_type='Hauling Income')
+            hauling_accounts = TruckingAccount.objects.filter(account_type__name='Hauling Income')
             
             # Initialize revenue streams
             front_load_amount = Decimal('0.00')
@@ -26,7 +26,7 @@ class RevenueStreamsView(APIView):
             
             for account in hauling_accounts:
                 # Skip if no route
-                if not account.route or str(account.route).strip() == '' or str(account.route).lower() == 'nan':
+                if not account.route:
                     continue
                 
                 key = (account.route, account.date, account.reference_number)
@@ -43,10 +43,14 @@ class RevenueStreamsView(APIView):
                     front_load = account.front_load
                     back_load = account.back_load
                     
-                    if front_load and 'Strike' in front_load:
+                    # Get front_load and back_load names
+                    front_load_name = front_load.name if front_load and hasattr(front_load, 'name') else (front_load if isinstance(front_load, str) else None)
+                    back_load_name = back_load.name if back_load and hasattr(back_load, 'name') else (back_load if isinstance(back_load, str) else None)
+                    
+                    if front_load_name and 'Strike' in front_load_name:
                         # If front_load is Strike, amount goes to back_load
                         back_load_amount += Decimal(str(amount))
-                    elif back_load and 'Strike' in back_load:
+                    elif back_load_name and 'Strike' in back_load_name:
                         # If back_load is Strike, amount goes to front_load
                         front_load_amount += Decimal(str(amount))
                     else:
@@ -71,29 +75,29 @@ class RevenueStreamsView(APIView):
             
             # Calculate expense streams from TruckingAccount
             # Get allowance amounts (Driver's Allowance)
-            allowance_amount = TruckingAccount.objects.filter(account_type='Driver\'s Allowance').aggregate(
+            allowance_amount = TruckingAccount.objects.filter(account_type__name='Driver\'s Allowance').aggregate(
                 total=Sum('final_total')
             )['total'] or 0
             
             # Get fuel amounts (Fuel and Oil)
-            fuel_amount = TruckingAccount.objects.filter(account_type='Fuel and Oil').aggregate(
+            fuel_amount = TruckingAccount.objects.filter(account_type__name='Fuel and Oil').aggregate(
                 total=Sum('final_total')
             )['total'] or 0
             
             # Get OPEX amounts by account types - sum actual values (negative values will be subtracted)
-            insurance_records = TruckingAccount.objects.filter(account_type='Insurance Expense')
+            insurance_records = TruckingAccount.objects.filter(account_type__name='Insurance Expense')
             insurance_amount = sum(float(record.final_total) for record in insurance_records)
             
-            repairs_records = TruckingAccount.objects.filter(account_type='Repairs and Maintenance Expense')
+            repairs_records = TruckingAccount.objects.filter(account_type__name='Repairs and Maintenance Expense')
             repairs_amount = sum(float(record.final_total) for record in repairs_records)
             
-            taxes_permits_records = TruckingAccount.objects.filter(account_type='Taxes, Permits and Licenses Expense')
+            taxes_permits_records = TruckingAccount.objects.filter(account_type__name='Taxes, Permits and Licenses Expense')
             taxes_permits_amount = sum(float(record.final_total) for record in taxes_permits_records)
             
-            salaries_records = TruckingAccount.objects.filter(account_type='Salaries and Wages')
+            salaries_records = TruckingAccount.objects.filter(account_type__name='Salaries and Wages')
             salaries_amount = sum(float(record.final_total) for record in salaries_records)
             
-            tax_records = TruckingAccount.objects.filter(account_type='Tax Expense')
+            tax_records = TruckingAccount.objects.filter(account_type__name='Tax Expense')
             tax_amount = sum(float(record.final_total) for record in tax_records)
             
             # Calculate total OPEX (excluding Driver's Allowance and Fuel)

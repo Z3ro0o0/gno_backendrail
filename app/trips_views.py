@@ -4,13 +4,18 @@ from rest_framework import status
 from django.db.models import Sum
 from collections import defaultdict
 import re
+from datetime import datetime
 from .models import (
     RepairAndMaintenanceAccount, 
     InsuranceAccount, 
     FuelAccount, 
     TaxAccount, 
     AllowanceAccount, 
-    IncomeAccount
+    IncomeAccount,
+    TruckingAccount,
+    Driver,
+    Route,
+    LoadType
 )
 
 
@@ -248,5 +253,117 @@ class TripsView(APIView):
         except Exception as e:
             return Response(
                 {'error': f'Failed to fetch trips data: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class UpdateTripFieldView(APIView):
+    """
+    POST: Update trip_route, driver, front_load, or back_load for all TruckingAccount records
+    matching the plate_number and date
+    """
+    
+    def post(self, request):
+        try:
+            plate_number = request.data.get('plate_number')
+            date_str = request.data.get('date')
+            field = request.data.get('field')  # 'trip_route', 'driver', 'front_load', 'back_load'
+            value = request.data.get('value')  # String value to set
+            
+            if not all([plate_number, date_str, field]):
+                return Response(
+                    {'error': 'Missing required fields: plate_number, date, field'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate field
+            valid_fields = ['trip_route', 'driver', 'front_load', 'back_load']
+            if field not in valid_fields:
+                return Response(
+                    {'error': f'Invalid field. Must be one of: {", ".join(valid_fields)}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Parse date
+            try:
+                date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+            except ValueError:
+                return Response(
+                    {'error': 'Invalid date format. Use YYYY-MM-DD'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Standardize plate number for matching
+            def standardize_plate(plate):
+                if not plate:
+                    return ''
+                return str(plate).replace(' ', '').replace('-', '').upper()
+            
+            standardized_plate = standardize_plate(plate_number)
+            
+            # Get all TruckingAccount records matching the plate number and date
+            matching_accounts = TruckingAccount.objects.filter(date=date_obj).select_related('truck')
+            
+            # Filter by plate number
+            accounts_to_update = []
+            for account in matching_accounts:
+                account_plate = None
+                if account.truck and account.truck.plate_number:
+                    account_plate = account.truck.plate_number
+                
+                if account_plate and standardize_plate(account_plate) == standardized_plate:
+                    accounts_to_update.append(account)
+            
+            if not accounts_to_update:
+                return Response(
+                    {'error': 'No matching trucking accounts found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Update the field for all matching accounts
+            updated_count = 0
+            for account in accounts_to_update:
+                if field == 'trip_route':
+                    if value:
+                        route, created = Route.objects.get_or_create(name=value)
+                        account.route = route
+                    else:
+                        account.route = None
+                elif field == 'driver':
+                    if value:
+                        driver, created = Driver.objects.get_or_create(name=value)
+                        account.driver = driver
+                    else:
+                        account.driver = None
+                elif field == 'front_load':
+                    if value:
+                        load_type, created = LoadType.objects.get_or_create(name=value)
+                        account.front_load = load_type
+                    else:
+                        account.front_load = None
+                elif field == 'back_load':
+                    if value:
+                        load_type, created = LoadType.objects.get_or_create(name=value)
+                        account.back_load = load_type
+                    else:
+                        account.back_load = None
+                
+                account.save()
+                updated_count += 1
+            
+            return Response({
+                'success': True,
+                'message': f'Successfully updated {field} for {updated_count} records',
+                'updated_count': updated_count,
+                'plate_number': plate_number,
+                'date': date_str,
+                'field': field,
+                'value': value
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            return Response(
+                {'error': f'Failed to update trip field: {str(e)}', 'traceback': traceback.format_exc()},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

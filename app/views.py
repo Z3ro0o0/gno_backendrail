@@ -5,8 +5,8 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import Q, Sum, Count
 from collections import defaultdict
-from .models import Driver, RepairAndMaintenanceAccount, InsuranceAccount, FuelAccount, Route, TaxAccount, AllowanceAccount, IncomeAccount, TruckingAccount, SalaryAccount, TruckType, AccountType, PlateNumber
-from .trucking_upload_view import TruckingAccountUploadView
+from .models import Driver, RepairAndMaintenanceAccount, InsuranceAccount, FuelAccount, Route, TaxAccount, AllowanceAccount, IncomeAccount, Truck, TruckingAccount, SalaryAccount, TruckType, AccountType, PlateNumber, LoadType
+from .trucking_upload_view import TruckingAccountUploadView, TruckUploadView
 from .salary_upload_view import SalaryAccountUploadView
 from .serializers import (
     DriverSerializer,
@@ -17,11 +17,13 @@ from .serializers import (
     TaxAccountSerializer,
     AllowanceAccountSerializer,
     IncomeAccountSerializer,
+    TruckSerializer,
     TruckingAccountSerializer,
     SalaryAccountSerializer,
     TruckTypeSerializer,
     AccountTypeSerializer,
-    PlateNumberSerializer
+    PlateNumberSerializer,
+    LoadTypeSerializer
 )
 import pandas as pd
 from datetime import datetime
@@ -42,6 +44,14 @@ class RouteListView(ListCreateAPIView):
 class RouteDetailView(RetrieveUpdateDestroyAPIView):
     queryset = Route.objects.all()
     serializer_class = RouteSerializer
+
+class TruckListView(ListCreateAPIView):
+    queryset = Truck.objects.all()
+    serializer_class = TruckSerializer
+
+class TruckDetailView(RetrieveUpdateDestroyAPIView):
+    queryset = Truck.objects.all()
+    serializer_class = TruckSerializer
 
 # TruckType Views
 class TruckTypeListView(ListCreateAPIView):
@@ -83,6 +93,27 @@ class AccountTypeDetailView(RetrieveUpdateDestroyAPIView):
     """
     queryset = AccountType.objects.all()
     serializer_class = AccountTypeSerializer
+
+
+# LoadType Views
+class LoadTypeListView(ListCreateAPIView):
+    """
+    GET: List all load types
+    POST: Create a new load type
+    """
+    queryset = LoadType.objects.all()
+    serializer_class = LoadTypeSerializer
+
+
+class LoadTypeDetailView(RetrieveUpdateDestroyAPIView):
+    """
+    GET: Retrieve a specific load type
+    PUT: Update a specific load type
+    PATCH: Partially update a specific load type
+    DELETE: Delete a specific load type
+    """
+    queryset = LoadType.objects.all()
+    serializer_class = LoadTypeSerializer
 
 
 # PlateNumber Views

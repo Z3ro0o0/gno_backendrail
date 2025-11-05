@@ -21,8 +21,8 @@ class DriversSummaryView(APIView):
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
             
-            # Base queryset
-            queryset = TruckingAccount.objects.all()
+            # Base queryset with related objects
+            queryset = TruckingAccount.objects.select_related('truck', 'driver', 'route').all()
             
             # Apply date filters if provided
             if start_date:
@@ -62,8 +62,8 @@ class DriversSummaryView(APIView):
                 'trucks': set()
             })
             
-            # Get all trucking accounts ordered by date, plate_number
-            accounts = queryset.order_by('date', 'plate_number', 'id')
+            # Get all trucking accounts ordered by date, truck plate_number
+            accounts = queryset.order_by('date', 'truck__plate_number', 'id')
             
             # Track entries for Strike logic
             entry_tracker = defaultdict(list)  # Key: (date, plate_number)
@@ -75,8 +75,11 @@ class DriversSummaryView(APIView):
                 driver_name = account.driver.name
                 amount = abs(float(account.credit)) if float(account.credit) != 0 else abs(float(account.debit))
                 
+                # Get plate_number from truck FK
+                plate = account.truck.plate_number if account.truck else None
+                
                 # Track entry for Strike logic
-                key = (str(account.date), account.plate_number)
+                key = (str(account.date), plate or '')
                 entry_tracker[key].append({
                     'account': account,
                     'amount': amount,
@@ -134,8 +137,8 @@ class DriversSummaryView(APIView):
                     
                     if account.route:
                         drivers_summary[driver_name]['routes'].add(account.route.name)
-                    if account.plate_number:
-                        drivers_summary[driver_name]['trucks'].add(account.plate_number)
+                    if account.truck and account.truck.plate_number:
+                        drivers_summary[driver_name]['trucks'].add(account.truck.plate_number)
             
             # Convert to list format
             result = []

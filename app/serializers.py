@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (
     Driver, RepairAndMaintenanceAccount, InsuranceAccount, FuelAccount, Route, TaxAccount, 
-    AllowanceAccount, IncomeAccount, TruckingAccount, SalaryAccount, TruckType, AccountType, PlateNumber
+    AllowanceAccount, IncomeAccount, Truck, TruckingAccount, SalaryAccount, TruckType, AccountType, PlateNumber, LoadType
 )
 
 class TruckTypeSerializer(serializers.ModelSerializer):
@@ -96,12 +96,38 @@ class RouteSerializer(serializers.ModelSerializer):
         fields = ['id', 'name']
         read_only_fields = ['id']
 
+class LoadTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LoadType
+        fields = ['id', 'name']
+        read_only_fields = ['id']
+
+class TruckSerializer(serializers.ModelSerializer):
+    truck_type = TruckTypeSerializer(read_only=True)
+    truck_type_id = serializers.PrimaryKeyRelatedField(queryset=TruckType.objects.all(), source='truck_type', write_only=True, required=False)
+    
+    class Meta:
+        model = Truck
+        fields = ['id', 'plate_number', 'truck_type', 'truck_type_id', 'company']
+        read_only_fields = ['id']
+
+
+
 class TruckingAccountSerializer(serializers.ModelSerializer):
     date = serializers.DateField(format='%m/%d/%Y', input_formats=['%m/%d/%Y', '%Y-%m-%d'])
     driver = DriverSerializer(read_only=True)
     route = RouteSerializer(read_only=True)
-    driver_id = serializers.IntegerField(source='driver.id', read_only=True)
-    route_id = serializers.IntegerField(source='route.id', read_only=True)
+    truck = TruckSerializer(read_only=True)
+    account_type = AccountTypeSerializer(read_only=True)
+    account_type_id = serializers.PrimaryKeyRelatedField(queryset=AccountType.objects.all(), source='account_type', write_only=True, required=False)
+    front_load = LoadTypeSerializer(read_only=True)
+    front_load_id = serializers.PrimaryKeyRelatedField(queryset=LoadType.objects.all(), source='front_load', write_only=True, required=False)
+    back_load = LoadTypeSerializer(read_only=True)
+    back_load_id = serializers.PrimaryKeyRelatedField(queryset=LoadType.objects.all(), source='back_load', write_only=True, required=False)
+    
+    driver_id = serializers.PrimaryKeyRelatedField(queryset=Driver.objects.all(), source='driver', write_only=True, required=False)
+    route_id = serializers.PrimaryKeyRelatedField(queryset=Route.objects.all(), source='route', write_only=True, required=False)
+    truck_id = serializers.PrimaryKeyRelatedField(queryset=Truck.objects.all(), source='truck', write_only=True, required=False)
     
     class Meta:
         model = TruckingAccount
@@ -109,8 +135,9 @@ class TruckingAccountSerializer(serializers.ModelSerializer):
             'id',
             'account_number',
             'account_type',
-            'truck_type',
-            'plate_number',
+            'account_type_id',
+            'truck',
+            'truck_id',
             'description',
             'debit',
             'credit',
@@ -121,11 +148,13 @@ class TruckingAccountSerializer(serializers.ModelSerializer):
             'quantity',
             'price',
             'driver',
-            'route',
             'driver_id',
+            'route',
             'route_id',
             'front_load',
+            'front_load_id',
             'back_load',
+            'back_load_id',
         ]
         read_only_fields = ['id']
 

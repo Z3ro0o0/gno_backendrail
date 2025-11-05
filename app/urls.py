@@ -4,10 +4,14 @@ from .views import (
     DriverListView,
     RouteDetailView,
     RouteListView,
+    TruckDetailView,
+    TruckListView,
     TruckTypeListView,
     TruckTypeDetailView,
     AccountTypeListView,
     AccountTypeDetailView,
+    LoadTypeListView,
+    LoadTypeDetailView,
     PlateNumberListView,
     PlateNumberDetailView,
     RepairAndMaintenanceAccountListView,
@@ -33,12 +37,13 @@ from .views import (
     TruckingAccountUploadView,
 )
 from .drivers_summary_view import DriversSummaryView
-from .trucking_upload_view import TruckingAccountPreviewView
+from .trucking_upload_view import TruckingAccountPreviewView, TruckUploadView
 from .revenue_views import RevenueStreamsView
 from .opex_views import OPEXView
 from .accounts_views import AccountsSummaryView, TruckingAccountSummaryView
 from .accounts_detail_views import AccountsDetailView
-from .trips_views import TripsView
+from .trips_views import TripsView, UpdateTripFieldView
+from .allowance_transfer_view import AllowanceTransferView
 
 urlpatterns = [
     # TruckType URLs
@@ -48,6 +53,10 @@ urlpatterns = [
     # AccountType URLs
     path('account-types/', AccountTypeListView.as_view(), name='account-type-list'),
     path('account-types/<int:pk>/', AccountTypeDetailView.as_view(), name='account-type-detail'),
+    
+    # LoadType URLs
+    path('load-types/', LoadTypeListView.as_view(), name='load-type-list'),
+    path('load-types/<int:pk>/', LoadTypeDetailView.as_view(), name='load-type-detail'),
     
     # PlateNumber URLs
     path('plate-numbers/', PlateNumberListView.as_view(), name='plate-number-list'),
@@ -109,6 +118,10 @@ urlpatterns = [
     
     # Trips URL
     path('trips/', TripsView.as_view(), name='trips'),
+    path('trips/update-field/', UpdateTripFieldView.as_view(), name='trips-update-field'),
+    
+    # Allowance Transfer URL
+    path('allowance/transfer/', AllowanceTransferView.as_view(), name='allowance-transfer'),
 
     # Driver URLs
     path('drivers/', DriverListView.as_view(), name='driver-list'),
@@ -117,4 +130,9 @@ urlpatterns = [
     # Route URLs
     path('routes/', RouteListView.as_view(), name='route-list'),
     path('routes/<int:pk>/', RouteDetailView.as_view(), name='route-detail'),
+
+    # Truck URLs
+    path('trucks/', TruckListView.as_view(), name='truck-list'),
+    path('trucks/<int:pk>/', TruckDetailView.as_view(), name='truck-detail'),
+    path('trucks/upload/', TruckUploadView.as_view(), name='truck-upload'),
 ]

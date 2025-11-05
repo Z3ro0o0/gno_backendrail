@@ -142,11 +142,23 @@ class Route(models.Model):
     def __str__(self):
         return self.name
 
+class Truck(models.Model):
+    plate_number = models.CharField(max_length=255)
+    truck_type = models.ForeignKey(TruckType, on_delete=models.CASCADE, null=True, blank=True)
+    company = models.CharField(max_length=255, null=True, blank=True)
+
+    def __str__(self):
+        return self.plate_number
+
+class LoadType(models.Model):
+    name = models.CharField(max_length=255)
+    def __str__(self):
+        return self.name
+
 class TruckingAccount(models.Model):
     account_number = models.CharField(max_length=255)
-    account_type = models.CharField(max_length=255)
-    truck_type = models.CharField(max_length=255)
-    plate_number = models.CharField(max_length=255, null=True, blank=True)
+    account_type = models.ForeignKey(AccountType, on_delete=models.CASCADE, null=True, blank=True)
+    truck = models.ForeignKey(Truck, on_delete=models.CASCADE, null=True, blank=True)
     description = models.TextField()
     debit = models.DecimalField(max_digits=15, decimal_places=2)
     credit = models.DecimalField(max_digits=15, decimal_places=2)
@@ -158,8 +170,8 @@ class TruckingAccount(models.Model):
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     driver = models.ForeignKey(Driver, on_delete=models.CASCADE, null=True, blank=True)
     route = models.ForeignKey(Route, on_delete=models.CASCADE, null=True, blank=True)
-    front_load = models.CharField(max_length=255, null=True, blank=True)
-    back_load = models.CharField(max_length=255, null=True, blank=True)
+    front_load = models.ForeignKey(LoadType, on_delete=models.CASCADE, null=True, blank=True,related_name='front_trucking_accounts')
+    back_load = models.ForeignKey(LoadType, on_delete=models.CASCADE, null=True, blank=True, related_name='back_trucking_accounts')
 
     def __str__(self):
         return f"{self.account_number} - {self.description}"
@@ -167,8 +179,7 @@ class TruckingAccount(models.Model):
 
 class SalaryAccount(models.Model):
     account_number = models.CharField(max_length=255)
-    account_type = models.CharField(max_length=255)
-    truck_type = models.CharField(max_length=255)
+    truck_type = models.ForeignKey(TruckType, on_delete=models.CASCADE)
     plate_number = models.CharField(max_length=255, null=True, blank=True)
     description = models.TextField()
     debit = models.DecimalField(max_digits=15, decimal_places=2)

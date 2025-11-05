@@ -1,7 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from .models import TruckingAccount, Driver, Route
+from .models import TruckingAccount, Driver, Route, Truck, TruckType, AccountType, LoadType
 import pandas as pd
 import re
 
@@ -15,8 +15,8 @@ INVALID_LOADS = {
     'transfer', 'pundo', 'tangke', 'bugas', 'humay', 'buug'
 }
 
-def is_valid_load(load_value):
-    """Enhanced validation for load values"""
+def is_valid_load(load_value, valid_load_types=None):
+    """Enhanced validation for load values - checks against LoadType model"""
     if not load_value or len(load_value.strip()) < 2:
         return False
     
@@ -26,37 +26,26 @@ def is_valid_load(load_value):
     if load_clean.isdigit():
         return False
     
-    # Known valid loads (whitelist)
+    # If valid_load_types is provided, use it (from database)
+    if valid_load_types is not None:
+        # Case-insensitive matching against database load types
+        load_lower = load_clean.lower()
+        for load_type in valid_load_types:
+            if load_type.lower() == load_lower:
+                return True
+        return False
+    
+    # Fallback: Known valid loads (for backward compatibility)
     valid_loads = {
-        'strike', 'cement', 'cemento', 'rh holcim', 'backload cdo', 
-        'humay', 'bugas', 'rice', 'gravel', 'sand'
+        'strike', 'cement', 'cemento', 'rh holcim', 'backload cdo'
     }
     
     # Check if it's a known valid load
     if load_clean.lower() in valid_loads:
         return True
     
-    # Check each word
-    words = load_clean.lower().split()
-    
-    # Single word validation
-    if len(words) == 1:
-        # Reject if in invalid list
-        if words[0] in INVALID_LOADS:
-            return False
-        # Accept if it looks like a load (3+ chars, not all special chars)
-        return len(words[0]) >= 3 and words[0].isalpha()
-    
-    # Multi-word validation
-    # Count invalid words
-    invalid_count = sum(1 for word in words if word in INVALID_LOADS)
-    
-    # Reject if more than half are invalid
-    if invalid_count > len(words) / 2:
-        return False
-    
-    # Accept multi-word loads that have at least one valid-looking word
-    return any(len(word) >= 3 and word.isalpha() for word in words)
+    # REJECT everything else
+    return False
 
 def standardize_plate_number(plate_number):
     """Standardize plate number format by removing spaces, hyphens, and converting to uppercase"""
@@ -71,48 +60,48 @@ def standardize_plate_number(plate_number):
     
     return standardized if standardized else None
 
-def clean_load_value(load_value):
-    """Enhanced cleaning for load values"""
+def clean_load_value(load_value, valid_load_types=None):
+    """Enhanced cleaning for load values - matches against LoadType model"""
     if not load_value:
         return None
     
     load_clean = str(load_value).strip()
     
-    # Special cases (whitelist)
+    # If valid_load_types is provided, find the best match from database
+    if valid_load_types is not None:
+        load_lower = load_clean.lower()
+        # Try exact match first
+        for load_type in valid_load_types:
+            if load_type.lower() == load_lower:
+                return load_type  # Return the exact name from database
+        
+        # Try partial match (in case there are extra words)
+        for load_type in valid_load_types:
+            if load_type.lower() in load_lower or load_lower in load_type.lower():
+                return load_type
+        
+        return None
+    
+    # Fallback: Special cases (for backward compatibility)
     special_cases = {
         'backload cdo': 'Backload CDO',
         'rh holcim': 'RH Holcim',
-        'strike holcim': 'Strike Holcim',
         'strike': 'Strike',
         'cement': 'Cement',
-        'cemento': 'Cemento',
-        # 'humay': 'Humay',
-        # 'bugas': 'Bugas'
+        'cemento': 'Cemento'
     }
     
+    # First check if it's a direct match
     if load_clean.lower() in special_cases:
         return special_cases[load_clean.lower()]
     
-    # Remove unwanted trailing words
-    unwanted_suffixes = [
-        'deliver', 'backload', 'kuha', 'ug', 'ni', 'sa', 
-        'mag', 'para', 'additional', 'pundo', 'tangke'
-    ]
+    # For case-sensitive variations, try to find a match
+    for key, value in special_cases.items():
+        if load_clean.lower() == key.lower():
+            return value
     
-    words = load_clean.split()
-    filtered_words = []
-    
-    for word in words:
-        if word.lower() not in unwanted_suffixes:
-            filtered_words.append(word)
-    
-    if filtered_words:
-        cleaned = ' '.join(filtered_words)
-        if is_valid_load(cleaned):
-            return cleaned
-    
-    # If cleaning removed everything, return original if valid
-    return load_clean if is_valid_load(load_clean) else None
+    # If not a direct match, return None
+    return None
 
 class TruckingAccountPreviewView(APIView):
     """
@@ -128,46 +117,445 @@ class TruckingAccountPreviewView(APIView):
             
             file = request.FILES['file']
             
-            # Read Excel file
-            df = pd.read_excel(file)
+            # Try reading Excel file without skipping rows first (for newledger.xlsx format)
+            # If that fails or columns don't match expected format, try with skiprows=7 for backward compatibility
+            try:
+                df = pd.read_excel(file)
+                # Check if we have expected columns for new format
+                df.columns = df.columns.str.strip()
+                has_new_format = any('account' in col.lower() for col in df.columns) and \
+                               any('type' in col.lower() and 'account' not in col.lower() and 'item' not in col.lower() for col in df.columns)
+                
+                if not has_new_format:
+                    # Reset file pointer and try with skiprows
+                    file.seek(0)
+                    df = pd.read_excel(file, skiprows=7)
+            except:
+                # If reading fails, try with skiprows for backward compatibility
+                file.seek(0)
+                df = pd.read_excel(file, skiprows=7)
             
             # Clean column names
             df.columns = df.columns.str.strip()
             
-            # Map Excel columns to model fields
-            column_mapping = {
-                'AccountNumber': 'account_number',
-                'AccountType': 'account_type',
-                'TruckType': 'truck_type',
-                'PlateNumber': 'plate_number',
-                'Description': 'description',
-                'Debit': 'debit',
-                'Credit': 'credit',
-                'FinalTotal': 'final_total',
-                'Remarks': 'remarks',
-                'ReferenceNumber': 'reference_number',
-                'Date': 'date',
-                'Quantity': 'quantity',
-                'Price': 'price',
-                'Driver': 'driver',
-                'Route': 'route',
-                'Front_Load': 'front_load',
-                'Back_Load': 'back_load'
-            }
+            # Remove rows with 'Total for' in ANY column BEFORE parsing (PREVIEW VIEW)
+            # This must happen early to avoid processing these rows
+            df = df[~df.astype(str).apply(lambda x: x.str.contains('Total for', case=False, na=False)).any(axis=1)]
+            
+            # Function to parse Account column into components (PREVIEW VIEW)
+            def parse_account_column(account_value):
+                """Parse Account column to extract Account_Number, Account_Type, Truck_type, Plate_number"""
+                if pd.isna(account_value) or account_value == '':
+                    return None, None, None, None
+                
+                account_str = str(account_value).strip()
+                
+                # Skip "Total for" rows
+                if 'Total for' in account_str:
+                    return None, None, None, None
+                
+                # Split by " - " to get components
+                parts = [p.strip() for p in account_str.split(' - ')]
+                
+                if len(parts) < 2:
+                    # If format is different, try to extract account number
+                    account_number_match = re.match(r'^(\d+)', account_str)
+                    if account_number_match:
+                        return account_number_match.group(1), None, None, None
+                    return None, None, None, None
+                
+                account_number = parts[0] if parts[0].isdigit() else None
+                account_type = None
+                truck_type = None
+                plate_number = None
+                
+                # Account type is usually the second part
+                if len(parts) > 1:
+                    account_type = parts[1]
+                
+                # Look for truck type in subsequent parts (common patterns: Trailer, Forward, 10-wheeler)
+                # Note: "Trucking" is NOT a truck type, it's an account type descriptor
+                truck_type_keywords = ['Trailer', 'Forward', '10-wheeler']
+                for part in parts[2:]:
+                    if any(keyword in part for keyword in truck_type_keywords):
+                        truck_type = part
+                        break
+                
+                # Look for plate number pattern (e.g., "KGJ 765", "NGS-4340", "NGS - 4340", "MVG 515", "TEMP 151005", "1101-939583")
+                # Pattern 1: Letters followed by numbers (with optional spaces/hyphens between them)
+                # This handles: "NGS-4340", "NGS 4340", "NGS - 4340", "KGJ 765"
+                plate_pattern1 = r'([A-Z]{2,4}[\s\-]*\d{3,6})'
+                # Pattern 2: Numbers followed by numbers (with optional hyphens/spaces) - more flexible
+                # This handles: "1101-939583", "1101 939583"
+                plate_pattern2 = r'(\d{3,4}[\s\-]*\d{3,9})'
+                # Pattern 3: More flexible pattern for alphanumeric plates
+                # This handles: "TEMP151005", "TEMP 151005"
+                plate_pattern3 = r'([A-Z0-9]{4,12})'
+                
+                # Search in the entire account string, not just parts - more reliable
+                account_upper = account_str.upper()
+                
+                # Try pattern 1 first (letters + numbers)
+                plate_match = re.search(plate_pattern1, account_upper)
+                if plate_match:
+                    plate_number = plate_match.group(1).replace(' ', '').replace('-', '').upper()
+                else:
+                    # Try pattern 2 (numbers + numbers)
+                    plate_match = re.search(plate_pattern2, account_upper)
+                    if plate_match:
+                        plate_number = plate_match.group(1).replace(' ', '').replace('-', '').upper()
+                    else:
+                        # Try pattern 3 (any alphanumeric sequence that looks like a plate)
+                        plate_match = re.search(plate_pattern3, account_upper)
+                        if plate_match:
+                            potential_plate = plate_match.group(1).replace(' ', '').replace('-', '').upper()
+                            # Only use if it has at least 3 digits (to avoid false positives)
+                            if sum(c.isdigit() for c in potential_plate) >= 3:
+                                plate_number = potential_plate
+                
+                return account_number, account_type, truck_type, plate_number
+            
+            # Find and parse Account column if it exists
+            account_col = None
+            for col in df.columns:
+                col_lower = col.lower().strip()
+                # Look for column that contains "account" but not "number" or "type"
+                if 'account' in col_lower and 'number' not in col_lower and 'type' not in col_lower:
+                    account_col = col
+                    break
+                # Also check for exact match
+                if col_lower == 'account':
+                    account_col = col
+                    break
+            
+            if account_col:
+                # Parse Account column and create new columns
+                parsed_data = df[account_col].apply(parse_account_column)
+                df['account_number'] = parsed_data.apply(lambda x: x[0] if x and x[0] else None)
+                df['account_type'] = parsed_data.apply(lambda x: x[1] if x and x[1] else None)
+                df['truck_type'] = parsed_data.apply(lambda x: x[2] if x and x[2] else None)
+                # Store the parsed plate number - keep it as-is for now, will be normalized during validation
+                # The parse_account_column already normalizes it (removes spaces/hyphens and uppercases)
+                df['plate_number'] = parsed_data.apply(lambda x: x[3] if x and x[3] else None)
+                
+                # Remove the original Account column - it should not be uploaded (PREVIEW VIEW)
+                df = df.drop(columns=[account_col], errors='ignore')
+            
+            # Helper function to extract plate number from any text using the same patterns
+            def extract_plate_from_text(text_value):
+                """Extract plate number from any text value using the same patterns as parse_account_column"""
+                if pd.isna(text_value) or text_value == '':
+                    return None
+                
+                text_str = str(text_value).strip()
+                text_upper = text_str.upper()
+                
+                # Pattern 1: Letters followed by numbers (with optional spaces/hyphens between them)
+                plate_pattern1 = r'([A-Z]{2,4}[\s\-]*\d{3,6})'
+                # Pattern 2: Numbers followed by numbers (with REQUIRED separator)
+                plate_pattern2 = r'(\d{3,4}[\s\-]+\d{3,9})'
+                # Pattern 3: More flexible pattern for alphanumeric plates
+                plate_pattern3 = r'([A-Z0-9]{4,12})'
+                
+                # Try pattern 1 first (letters + numbers)
+                plate_match = re.search(plate_pattern1, text_upper)
+                if plate_match:
+                    return plate_match.group(1).replace(' ', '').replace('-', '').upper()
+                
+                # Try pattern 2 (numbers + numbers with separator)
+                all_matches = re.findall(plate_pattern2, text_upper)
+                if all_matches:
+                    return all_matches[-1].replace(' ', '').replace('-', '').upper()
+                
+                # Try pattern 3 (any alphanumeric sequence that looks like a plate)
+                all_matches = re.findall(plate_pattern3, text_upper)
+                if all_matches:
+                    potential_plates = [m for m in all_matches if sum(c.isdigit() for c in m) >= 3]
+                    if potential_plates:
+                        return potential_plates[-1].replace(' ', '').replace('-', '').upper()
+                
+                return None
+            
+            # If plate_number is None for any row, search ALL other columns for plate numbers
+            if 'plate_number' in df.columns:
+                # Find rows where plate_number is None
+                missing_plate_mask = df['plate_number'].isna() | (df['plate_number'] == '') | (df['plate_number'] == None)
+                
+                if missing_plate_mask.any():
+                    # Search in ALL other columns (skip plate_number, account_number, account_type, truck_type)
+                    columns_to_search = []
+                    priority_columns = []
+                    other_columns = []
+                    
+                    for col in df.columns:
+                        col_lower = col.lower().strip()
+                        # Skip columns we've already processed
+                        if col in ['plate_number', 'account_number', 'account_type', 'truck_type']:
+                            continue
+                        # Priority columns: Remarks, Description, unnamed columns
+                        if 'remark' in col_lower or 'description' in col_lower or 'unnamed' in col_lower:
+                            priority_columns.append(col)
+                        else:
+                            other_columns.append(col)
+                    
+                    # Combine: priority columns first, then other columns
+                    columns_to_search = priority_columns + other_columns
+                    
+                    # For each row with missing plate_number, search the columns
+                    for idx in df[missing_plate_mask].index:
+                        for col in columns_to_search:
+                            if col in df.columns:
+                                plate_from_col = extract_plate_from_text(df.at[idx, col])
+                                if plate_from_col:
+                                    df.at[idx, 'plate_number'] = plate_from_col
+                                    break  # Found a plate number, move to next row
+            
+            # Validate account_type against /api/v1/account-types/ endpoint (PREVIEW VIEW)
+            # Get valid account types from AccountType model
+            valid_account_types = set(AccountType.objects.values_list('name', flat=True))
+            
+            if 'account_type' in df.columns:
+                def validate_account_type(account_type_value):
+                    if pd.isna(account_type_value) or account_type_value == '' or account_type_value is None:
+                        return None
+                    account_type_str = str(account_type_value).strip()
+                    # Check if it's a valid account type (case-insensitive)
+                    for valid_type in valid_account_types:
+                        if account_type_str.lower() == valid_type.lower():
+                            return valid_type
+                    # If not found, return None (invalid account type - not in endpoint)
+                    return None
+                
+                df['account_type'] = df['account_type'].apply(validate_account_type)
+            
+            # Validate truck_type and plate_number against /api/v1/trucks/ endpoint (PREVIEW VIEW)
+            # Get valid trucks from Truck model
+            valid_trucks = Truck.objects.select_related('truck_type').all()
+            
+            # Standardize plate number function - removes spaces and hyphens for comparison
+            def standardize_plate(plate_str):
+                if pd.isna(plate_str) or plate_str == '' or plate_str is None:
+                    return None
+                # Remove all spaces, hyphens, underscores, and convert to uppercase for comparison
+                return str(plate_str).strip().upper().replace(' ', '').replace('-', '').replace('_', '')
+            
+            # Create a mapping of normalized plate_number -> (original_plate_number, truck_type_name, truck_object)
+            truck_plate_map = {}
+            truck_type_names = set()
+            for truck in valid_trucks:
+                if truck.plate_number:
+                    plate_key = standardize_plate(truck.plate_number)
+                    # Store original plate number, truck type, and truck object
+                    truck_plate_map[plate_key] = {
+                        'plate_number': truck.plate_number,  # Original format from database
+                        'truck_type': truck.truck_type.name if truck.truck_type else None,
+                        'truck': truck
+                    }
+                    if truck.truck_type:
+                        truck_type_names.add(truck.truck_type.name)
+            
+            # Validate truck_type and plate_number - both must exist in /api/v1/trucks/
+            # Always validate if plate_number or truck_type columns exist (even if empty)
+            def validate_truck_data(row):
+                # Get parsed plate number (may already be normalized during parsing, but normalize again to be sure)
+                parsed_plate = row.get('plate_number') if 'plate_number' in df.columns else None
+                plate_num_normalized = standardize_plate(parsed_plate)
+                truck_type_str = str(row.get('truck_type')).strip() if 'truck_type' in df.columns and not pd.isna(row.get('truck_type')) and str(row.get('truck_type')).strip() != '' else None
+                
+                # If plate_number is provided, validate it exists in trucks endpoint
+                if plate_num_normalized:
+                    # Normalize the parsed plate again to ensure it matches (handles "1101-939583" -> "1101939583")
+                    truck_data = truck_plate_map.get(plate_num_normalized)
+                    
+                    if truck_data:
+                        # Found matching truck in endpoint
+                        original_plate = truck_data['plate_number']
+                        db_truck_type = truck_data['truck_type']
+                        
+                        # If truck_type is also provided, validate it matches the truck's type
+                        if truck_type_str:
+                            if db_truck_type and db_truck_type.lower() == truck_type_str.lower():
+                                return db_truck_type, original_plate
+                            else:
+                                # Plate exists but truck_type doesn't match - still return plate with correct truck_type
+                                # The truck_type from the endpoint takes precedence
+                                return db_truck_type, original_plate
+                        else:
+                            # Only plate_number provided, return truck's type and original plate number
+                            return db_truck_type, original_plate
+                    else:
+                        # Plate number not found in trucks endpoint - return None
+                        return None, None
+                elif truck_type_str:
+                    # Only truck_type provided, validate it exists in any truck
+                    if truck_type_str.lower() in [t.lower() for t in truck_type_names]:
+                        # Return the canonical truck type name
+                        for valid_type in truck_type_names:
+                            if valid_type.lower() == truck_type_str.lower():
+                                return valid_type, None
+                    else:
+                        # Truck type not found in trucks endpoint
+                        return None, None
+                
+                # No plate or truck_type provided, keep existing values
+                return row.get('truck_type') if 'truck_type' in df.columns else None, row.get('plate_number') if 'plate_number' in df.columns else None
+            
+            # Apply validation to each row - PREVIEW VIEW
+            if 'plate_number' in df.columns or 'truck_type' in df.columns:
+                validated_data = df.apply(validate_truck_data, axis=1)
+                # Extract truck_type and plate_number from tuples, handling None properly
+                df['truck_type'] = validated_data.apply(lambda x: x[0] if x and x[0] is not None else None)
+                df['plate_number'] = validated_data.apply(lambda x: x[1] if x and x[1] is not None else None)
+            
+            # Map Excel columns to model fields (handle various column name formats) - PREVIEW VIEW
+            # First, define columns to drop (not needed for newledger.xlsx format)
+            columns_to_drop_list = []
+            for col in df.columns:
+                col_lower = col.lower().strip()
+                # Drop columns that are not needed
+                if any(keyword in col_lower for keyword in [
+                    'applied to invoice', 'item code', 'item type', 'cost', 
+                    'payment type', 'customer', 'supplier', 'employee', 
+                    'cash account', 'check no', 'check date', 'location', 
+                    'project', 'balance'
+                ]):
+                    # But keep if it's "Reference No." which we'll handle separately
+                    if 'reference no' not in col_lower:
+                        columns_to_drop_list.append(col)
+            
+            # Also drop "QTY", "Price", "Description" (old), "Item" if they exist as separate columns
+            # (we'll use Type as description, and QTY/Price from new format if needed)
+            for col in df.columns:
+                col_lower = col.lower().strip()
+                if col_lower == 'qty' or col_lower == 'item':
+                    columns_to_drop_list.append(col)
+                # Drop old "Description" if we have "Type" column (Type is the new description)
+                if col_lower == 'description' and any('type' in c.lower() and 'account' not in c.lower() and 'item' not in c.lower() for c in df.columns):
+                    columns_to_drop_list.append(col)
+            
+            column_mapping = {}
+            for col in df.columns:
+                # Skip columns we're dropping
+                if col in columns_to_drop_list:
+                    continue
+                    
+                col_lower = col.lower().strip()
+                
+                # Map Account column - will be parsed separately
+                if 'account' in col_lower and 'number' not in col_lower and 'type' not in col_lower:
+                    # This will be parsed, not mapped directly
+                    continue
+                elif 'account' in col_lower and 'number' in col_lower:
+                    column_mapping[col] = 'account_number'
+                elif 'account' in col_lower and 'type' in col_lower and 'account_number' not in df.columns:
+                    column_mapping[col] = 'account_type'
+                elif 'truck' in col_lower and 'type' in col_lower and 'truck_type' not in df.columns:
+                    column_mapping[col] = 'truck_type'
+                elif ('plate' in col_lower or 'truck plate' in col_lower) and 'plate_number' not in df.columns:
+                    column_mapping[col] = 'plate_number'
+                # Map "Type" column to "description" (new format - Type is the description)
+                elif col_lower == 'type' or (col_lower == 'type' and 'item' not in col_lower):
+                    column_mapping[col] = 'description'
+                # Also handle old "Description" column if Type doesn't exist
+                elif 'description' in col_lower and 'description' not in column_mapping.values():
+                    column_mapping[col] = 'description'
+                elif 'debit' in col_lower:
+                    column_mapping[col] = 'debit'
+                elif 'credit' in col_lower:
+                    column_mapping[col] = 'credit'
+                elif 'final' in col_lower and ('total' in col_lower or 'tc' in col_lower):
+                    column_mapping[col] = 'final_total'
+                elif 'remarks' in col_lower:
+                    column_mapping[col] = 'remarks'
+                # Map "RR No." to reference_number (new format)
+                elif 'rr no' in col_lower or col_lower == 'rr no.':
+                    column_mapping[col] = 'reference_number'
+                # Also handle old "Reference No." or "Reference Number" 
+                elif ('reference no' in col_lower or 'reference number' in col_lower) and 'reference_number' not in column_mapping.values():
+                    column_mapping[col] = 'reference_number'
+                elif 'date' in col_lower:
+                    column_mapping[col] = 'date'
+                elif 'quantity' in col_lower:
+                    column_mapping[col] = 'quantity'
+                elif 'price' in col_lower:
+                    column_mapping[col] = 'price'
+                elif 'driver' in col_lower:
+                    column_mapping[col] = 'driver'
+                elif 'route' in col_lower:
+                    column_mapping[col] = 'route'
+                elif 'front' in col_lower and 'load' in col_lower:
+                    column_mapping[col] = 'front_load'
+                elif 'back' in col_lower and 'load' in col_lower:
+                    column_mapping[col] = 'back_load'
+            
+            # If no description column was found, check Unnamed columns for description-like data
+            if 'description' not in column_mapping.values():
+                for col in df.columns:
+                    if col in columns_to_drop_list:
+                        continue
+                    if 'unnamed' in col.lower():
+                        # Check if this column contains description-like data
+                        # Sample a few non-null values to determine if it's a description column
+                        sample_values = df[col].dropna().astype(str).head(10).tolist()
+                        # Check if values contain common description keywords
+                        description_keywords = ['beginning balance', 'receive inventory', 'inventory withdrawal', 'funds', 'transfer']
+                        if any(any(keyword in str(val).lower() for keyword in description_keywords) for val in sample_values):
+                            column_mapping[col] = 'description'
+                            break
+            
+            # Drop unwanted columns BEFORE renaming
+            df = df.drop(columns=columns_to_drop_list, errors='ignore')
             
             # Rename columns
             df = df.rename(columns=column_mapping)
             
-            # Remove rows with 'Total for' in any column
-            df = df[~df.astype(str).apply(lambda x: x.str.contains('Total for', case=False, na=False)).any(axis=1)]
+            # Handle "Beginning Balance" - set ALL numeric fields to 0 (but don't delete the row)
+            # Search ALL columns for "Beginning Balance" text BEFORE removing Unnamed columns
+            # This ensures we catch "Beginning Balance" even if it's in an "Unnamed" column
+            beginning_balance_mask = df.astype(str).apply(lambda x: x.str.contains('Beginning Balance', case=False, na=False)).any(axis=1)
             
-            # Set Beginning Balance values to 0
-            beginning_balance_mask = df['description'].astype(str).str.contains('Beginning Balance', case=False, na=False)
-            df.loc[beginning_balance_mask, 'debit'] = 0
-            df.loc[beginning_balance_mask, 'credit'] = 0
-            df.loc[beginning_balance_mask, 'final_total'] = 0
+            # Set all numeric/decimal fields to 0
+            # Use original column names first, then mapped names
+            numeric_field_names = ['debit', 'credit', 'final_total', 'Debit', 'Credit', 'Final Total', 'Final Total', 'QTY (Fuel)', 'Unit Cost']
+            for field in numeric_field_names:
+                if field in df.columns:
+                    # Ensure we convert to numeric first, then set to 0
+                    df[field] = pd.to_numeric(df[field], errors='coerce')
+                    df.loc[beginning_balance_mask, field] = 0
             
-            # Include the same enhanced parsing functions here
+            # Remove any remaining Account-related columns that aren't the parsed ones (Account, Account.1, etc.) - PREVIEW VIEW
+            # But only drop if they exist and haven't been mapped yet
+            columns_to_drop = [col for col in df.columns if col.lower().startswith('account') 
+                              and col.lower() not in ['account_number', 'account_type'] 
+                              and col not in column_mapping]
+            df = df.drop(columns=columns_to_drop, errors='ignore')
+            
+            # Remove any Unnamed columns - PREVIEW VIEW (but keep description if it was mapped from Unnamed)
+            columns_to_drop = [col for col in df.columns if 'unnamed' in col.lower() and col not in column_mapping]
+            df = df.drop(columns=columns_to_drop, errors='ignore')
+            
+            # Drop old "Reference No." if we've mapped "RR No." to reference_number
+            if 'reference_number' in column_mapping.values():
+                # Find which column was mapped to reference_number
+                mapped_ref_col = [col for col, mapped in column_mapping.items() if mapped == 'reference_number']
+                if mapped_ref_col:
+                    # Drop other reference columns that weren't mapped
+                    ref_cols_to_drop = [col for col in df.columns 
+                                       if ('reference' in col.lower() or 'rr no' in col.lower()) 
+                                       and col not in mapped_ref_col 
+                                       and col not in column_mapping]
+                    df = df.drop(columns=ref_cols_to_drop, errors='ignore')
+            
+            # Handle "Beginning Balance" again after column mapping (to catch mapped column names)
+            beginning_balance_mask = df.astype(str).apply(lambda x: x.str.contains('Beginning Balance', case=False, na=False)).any(axis=1)
+            numeric_fields = ['debit', 'credit', 'final_total', 'quantity', 'price']
+            for field in numeric_fields:
+                if field in df.columns:
+                    # Ensure we convert to numeric first, then set to 0
+                    df[field] = pd.to_numeric(df[field], errors='coerce')
+                    df.loc[beginning_balance_mask, field] = 0
+            
+            # Include the same enhanced parsing functions here - PREVIEW VIEW
             def extract_driver_from_remarks(remarks):
                 if pd.isna(remarks) or remarks is None:
                     return None
@@ -285,6 +673,7 @@ class TruckingAccountPreviewView(APIView):
                 """
                 Extract front and back loads ONLY if they appear in a slash pattern, e.g. 'Strike/Cement'.
                 Ignores all other forms such as 'deliver ug cemento' or 'backload humay'.
+                Validates against LoadType database.
                 """
                 if pd.isna(remarks) or remarks is None:
                     return None, None
@@ -292,45 +681,132 @@ class TruckingAccountPreviewView(APIView):
 
                 front_load = None
                 back_load = None
+                
+                # Get valid load types from database
+                valid_load_types = [lt.name for lt in LoadType.objects.all()]
+
+                # Helper function to clean load value - remove route names, delivery words, etc.
+                def clean_load_extracted(load_str):
+                    """Clean extracted load value by removing route names and delivery words"""
+                    if not load_str:
+                        return None
+                    
+                    cleaned = str(load_str).strip()
+                    
+                    # Remove route indicators (PAG-, DUMINGAG, etc.)
+                    route_patterns = [
+                        r'\bPAG-[A-Z]+\b',
+                        r'\bDUMINGAG\b',
+                        r'\bDIMATALING\b',
+                        r'\bCDO\b',
+                        r'\bILIGAN\b',
+                        r'\bOPEX\b',
+                        r'\bPAGADIAN\b'
+                    ]
+                    for pattern in route_patterns:
+                        cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+                    
+                    # Remove delivery/action words
+                    delivery_words = [
+                        r'\bdeliver\b',
+                        r'\bDeliver\b',
+                        r'\bDELIVER\b',
+                        r'\bpara\b',
+                        r'\bPara\b',
+                        r'\bsa\b',
+                        r'\bto\b',
+                        r'\bug\b',
+                        r'\bni\b',
+                        r'\bmao\b'
+                    ]
+                    for word in delivery_words:
+                        cleaned = re.sub(word, '', cleaned, flags=re.IGNORECASE)
+                    
+                    # Remove numbers and special characters at the end
+                    cleaned = re.sub(r'[:\.,;]+$', '', cleaned)
+                    cleaned = re.sub(r'\s+\+\d+.*$', '', cleaned)  # Remove "+165ltrs" etc.
+                    cleaned = re.sub(r'\s+\d+.*$', '', cleaned)  # Remove trailing numbers
+                    
+                    # Clean up multiple spaces
+                    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+                    
+                    return cleaned if cleaned else None
+
+                # Helper function to get Strike load type from database
+                def get_strike_load():
+                    """Get Strike load type from database, case-insensitive"""
+                    strike_load = next((lt for lt in valid_load_types if lt.lower() == 'strike'), None)
+                    return strike_load if strike_load else 'Strike'  # Fallback to 'Strike' if not in DB
+                
+                # Helper function to handle single load with default to Strike
+                def handle_single_load(front, back):
+                    """Handle case where one load is valid and other is missing - default missing to Strike"""
+                    front_valid = front and is_valid_load(front, valid_load_types)
+                    back_valid = back and is_valid_load(back, valid_load_types)
+                    
+                    if front_valid and back_valid:
+                        # Both valid - return both
+                        return clean_load_value(front, valid_load_types), clean_load_value(back, valid_load_types)
+                    elif front_valid and not back_valid:
+                        # Front valid, back missing/invalid - set back to "Strike"
+                        strike_load = get_strike_load()
+                        return clean_load_value(front, valid_load_types), strike_load
+                    elif back_valid and not front_valid:
+                        # Back valid, front missing/invalid - set front to "Strike"
+                        strike_load = get_strike_load()
+                        return strike_load, clean_load_value(back, valid_load_types)
+                    return None, None
 
                 # Pattern 1: "load1/load2:" - with trailing colon (most common)
-                # Examples: "Strike/Cement:", "RH Holcim/Cement:", "Strike/cemento:"
+                # Examples: "Strike/Cement:", "RH Holcim/Cement:", "RH Holcim/Backload CDO:", "Strike/cemento:"
                 load_pattern_with_colon = r':\s*([A-Za-z\s]+)/([A-Za-z\s]+):'
                 match = re.search(load_pattern_with_colon, remarks_str)
                 if match:
-                    potential_front = match.group(1).strip()
-                    potential_back = match.group(2).strip()
-                    
-                    # Validate both loads
-                    if is_valid_load(potential_front) and is_valid_load(potential_back):
-                        return clean_load_value(potential_front), clean_load_value(potential_back)
+                    potential_front = clean_load_extracted(match.group(1))
+                    potential_back = clean_load_extracted(match.group(2))
+                    result = handle_single_load(potential_front, potential_back)
+                    if result[0] and result[1]:
+                        return result
 
                 # Pattern 2: "load1/load2" at end of string (no trailing colon)
                 # Examples: "Strike/Cement", "Cement/Backload CDO"
                 load_pattern_end = r':\s*([A-Za-z\s]+)/([A-Za-z\s]+)\s*$'
                 match = re.search(load_pattern_end, remarks_str)
                 if match:
-                    potential_front = match.group(1).strip()
-                    potential_back = match.group(2).strip()
-                    
-                    if is_valid_load(potential_front) and is_valid_load(potential_back):
-                        return clean_load_value(potential_front), clean_load_value(potential_back)
+                    potential_front = clean_load_extracted(match.group(1))
+                    potential_back = clean_load_extracted(match.group(2))
+                    result = handle_single_load(potential_front, potential_back)
+                    if result[0] and result[1]:
+                        return result
 
-                # Pattern 3: "load1/load2" anywhere in the string with word boundaries
+                # Pattern 3: "load1/load2" followed by text (no colon, but with separator words)
+                # Examples: "Strike/Cement deliver to caluma", "Strike/Cement +120ltrs", "RH Holcim/Cement DUMINGAG Deliver"
+                load_pattern_with_text = r':\s*([A-Za-z\s]+)/([A-Za-z\s]+?)(?:\s+(?:deliver|Deliver|DELIVER|para|Para|sa|to|ug|\+|:|\d|DUMINGAG|DIMATALING|PAG-|$))'
+                match = re.search(load_pattern_with_text, remarks_str, re.IGNORECASE)
+                if match:
+                    potential_front = clean_load_extracted(match.group(1))
+                    potential_back = clean_load_extracted(match.group(2))
+                    result = handle_single_load(potential_front, potential_back)
+                    if result[0] and result[1]:
+                        return result
+
+                # Pattern 4: "load1/load2" anywhere in the string with word boundaries
                 # Examples: "PAG-ILIGAN: Strike/Cement: additional notes"
                 load_pattern_general = r'\b([A-Za-z\s]{3,})/([A-Za-z\s]{3,})\b'
                 match = re.search(load_pattern_general, remarks_str)
                 if match:
-                    potential_front = match.group(1).strip()
-                    potential_back = match.group(2).strip()
+                    potential_front = clean_load_extracted(match.group(1))
+                    potential_back = clean_load_extracted(match.group(2))
 
                     # Make sure neither part looks like a route or driver name
-                    route_indicators = ['PAG-', 'CDO', 'ILIGAN', 'OPEX', 'PAGADIAN']
-                    is_route = any(indicator in potential_front.upper() or indicator in potential_back.upper()
+                    route_indicators = ['PAG-', 'CDO', 'ILIGAN', 'OPEX', 'PAGADIAN', 'DUMINGAG', 'DIMATALING']
+                    is_route = any(indicator in (potential_front or '').upper() or indicator in (potential_back or '').upper()
                                 for indicator in route_indicators)
 
-                    if not is_route and is_valid_load(potential_front) and is_valid_load(potential_back):
-                        return clean_load_value(potential_front), clean_load_value(potential_back)
+                    if not is_route:
+                        result = handle_single_load(potential_front, potential_back)
+                        if result[0] and result[1]:
+                            return result
 
                 # No slash pattern found - return None for both
                 return None, None
@@ -379,6 +855,33 @@ class TruckingAccountPreviewView(APIView):
                 hauling_income_mask = df['account_type'].astype(str).str.contains('Hauling Income', case=False, na=False)
                 df.loc[hauling_income_mask, 'final_total'] = df.loc[hauling_income_mask, 'final_total'] * -1
             
+            # Define desired column order for preview
+            desired_column_order = [
+                'account_number',
+                'account_type',
+                'truck_type',
+                'plate_number',
+                'description',
+                'debit',
+                'credit',
+                'final_total',
+                'remarks',
+                'reference_number',
+                'date',
+                'quantity',
+                'price',
+                'driver',
+                'route',
+                'front_load',
+                'back_load'
+            ]
+            
+            # Reorder DataFrame columns: desired order first, then any remaining columns
+            existing_columns = list(df.columns)
+            ordered_columns = [col for col in desired_column_order if col in existing_columns]
+            remaining_columns = [col for col in existing_columns if col not in desired_column_order]
+            df = df[ordered_columns + remaining_columns]
+            
             # Convert to list of dictionaries for preview - show ALL columns
             preview_data = []
             parsing_stats = {
@@ -399,7 +902,8 @@ class TruckingAccountPreviewView(APIView):
                 return str(value) if value != '' else default
             
             for index, row in df.iterrows():
-                if pd.isna(row.get('account_number')) or row.get('account_number') == '':
+                # Skip completely empty rows
+                if row.isnull().all():
                     continue
                 
                 if row.get('driver') and row.get('driver') != '':
@@ -409,12 +913,18 @@ class TruckingAccountPreviewView(APIView):
                 if row.get('front_load') and row.get('front_load') != '':
                     parsing_stats['loads_extracted'] += 1
                 
-                # Create row data with ALL columns from the original Excel file
+                # Create row data with columns in desired order
                 row_data = {'row_number': index + 1}
                 
-                # Add all columns from the DataFrame
+                # Add columns in the desired order first
+                for col in desired_column_order:
+                    if col in df.columns:
+                        row_data[col] = safe_convert(row.get(col))
+                
+                # Then add any remaining columns that weren't in the desired order
                 for col in df.columns:
-                    row_data[col] = safe_convert(row.get(col))
+                    if col not in desired_column_order:
+                        row_data[col] = safe_convert(row.get(col))
                 
                 preview_data.append(row_data)
             
@@ -448,46 +958,445 @@ class TruckingAccountUploadView(APIView):
             
             file = request.FILES['file']
             
-            # Read Excel file
-            df = pd.read_excel(file)
+            # Try reading Excel file without skipping rows first (for newledger.xlsx format)
+            # If that fails or columns don't match expected format, try with skiprows=7 for backward compatibility
+            try:
+                df = pd.read_excel(file)
+                # Check if we have expected columns for new format
+                df.columns = df.columns.str.strip()
+                has_new_format = any('account' in col.lower() for col in df.columns) and \
+                               any('type' in col.lower() and 'account' not in col.lower() and 'item' not in col.lower() for col in df.columns)
+                
+                if not has_new_format:
+                    # Reset file pointer and try with skiprows
+                    file.seek(0)
+                    df = pd.read_excel(file, skiprows=7)
+            except:
+                # If reading fails, try with skiprows for backward compatibility
+                file.seek(0)
+                df = pd.read_excel(file, skiprows=7)
             
             # Clean column names
             df.columns = df.columns.str.strip()
             
-            # Map Excel columns to model fields
-            column_mapping = {
-                'AccountNumber': 'account_number',
-                'AccountType': 'account_type',
-                'TruckType': 'truck_type',
-                'PlateNumber': 'plate_number',
-                'Description': 'description',
-                'Debit': 'debit',
-                'Credit': 'credit',
-                'FinalTotal': 'final_total',
-                'Remarks': 'remarks',
-                'ReferenceNumber': 'reference_number',
-                'Date': 'date',
-                'Quantity': 'quantity',
-                'Price': 'price',
-                'Driver': 'driver',
-                'Route': 'route',
-                'Front_Load': 'front_load',
-                'Back_Load': 'back_load'
-            }
+            # Remove rows with 'Total for' in ANY column BEFORE parsing (UPLOAD VIEW)
+            # This must happen early to avoid processing these rows
+            df = df[~df.astype(str).apply(lambda x: x.str.contains('Total for', case=False, na=False)).any(axis=1)]
+            
+            # Function to parse Account column into components
+            def parse_account_column(account_value):
+                """Parse Account column to extract Account_Number, Account_Type, Truck_type, Plate_number"""
+                if pd.isna(account_value) or account_value == '':
+                    return None, None, None, None
+                
+                account_str = str(account_value).strip()
+                
+                # Skip "Total for" rows
+                if 'Total for' in account_str:
+                    return None, None, None, None
+                
+                # Split by " - " to get components
+                parts = [p.strip() for p in account_str.split(' - ')]
+                
+                if len(parts) < 2:
+                    # If format is different, try to extract account number
+                    account_number_match = re.match(r'^(\d+)', account_str)
+                    if account_number_match:
+                        return account_number_match.group(1), None, None, None
+                    return None, None, None, None
+                
+                account_number = parts[0] if parts[0].isdigit() else None
+                account_type = None
+                truck_type = None
+                plate_number = None
+                
+                # Account type is usually the second part
+                if len(parts) > 1:
+                    account_type = parts[1]
+                
+                # Look for truck type in subsequent parts (common patterns: Trailer, Forward, 10-wheeler)
+                # Note: "Trucking" is NOT a truck type, it's an account type descriptor
+                truck_type_keywords = ['Trailer', 'Forward', '10-wheeler']
+                for part in parts[2:]:
+                    if any(keyword in part for keyword in truck_type_keywords):
+                        truck_type = part
+                        break
+                
+                # Look for plate number pattern (e.g., "KGJ 765", "NGS-4340", "NGS - 4340", "MVG 515", "TEMP 151005", "1101-939583")
+                # Pattern 1: Letters followed by numbers (with optional spaces/hyphens between them)
+                # This handles: "NGS-4340", "NGS 4340", "NGS - 4340", "KGJ 765"
+                plate_pattern1 = r'([A-Z]{2,4}[\s\-]*\d{3,6})'
+                # Pattern 2: Numbers followed by numbers (with optional hyphens/spaces) - more flexible
+                # This handles: "1101-939583", "1101 939583"
+                plate_pattern2 = r'(\d{3,4}[\s\-]*\d{3,9})'
+                # Pattern 3: More flexible pattern for alphanumeric plates
+                # This handles: "TEMP151005", "TEMP 151005"
+                plate_pattern3 = r'([A-Z0-9]{4,12})'
+                
+                # Search in the entire account string, not just parts - more reliable
+                account_upper = account_str.upper()
+                
+                # Try pattern 1 first (letters + numbers)
+                plate_match = re.search(plate_pattern1, account_upper)
+                if plate_match:
+                    plate_number = plate_match.group(1).replace(' ', '').replace('-', '').upper()
+                else:
+                    # Try pattern 2 (numbers + numbers)
+                    plate_match = re.search(plate_pattern2, account_upper)
+                    if plate_match:
+                        plate_number = plate_match.group(1).replace(' ', '').replace('-', '').upper()
+                    else:
+                        # Try pattern 3 (any alphanumeric sequence that looks like a plate)
+                        plate_match = re.search(plate_pattern3, account_upper)
+                        if plate_match:
+                            potential_plate = plate_match.group(1).replace(' ', '').replace('-', '').upper()
+                            # Only use if it has at least 3 digits (to avoid false positives)
+                            if sum(c.isdigit() for c in potential_plate) >= 3:
+                                plate_number = potential_plate
+                
+                return account_number, account_type, truck_type, plate_number
+            
+            # Find and parse Account column if it exists
+            account_col = None
+            for col in df.columns:
+                col_lower = col.lower().strip()
+                # Look for column that contains "account" but not "number" or "type"
+                if 'account' in col_lower and 'number' not in col_lower and 'type' not in col_lower:
+                    account_col = col
+                    break
+                # Also check for exact match
+                if col_lower == 'account':
+                    account_col = col
+                    break
+            
+            if account_col:
+                # Parse Account column and create new columns
+                parsed_data = df[account_col].apply(parse_account_column)
+                df['account_number'] = parsed_data.apply(lambda x: x[0] if x else None)
+                df['account_type'] = parsed_data.apply(lambda x: x[1] if x else None)
+                df['truck_type'] = parsed_data.apply(lambda x: x[2] if x else None)
+                # Store the parsed plate number (it's already normalized in parse_account_column)
+                # But keep the original format for now - we'll normalize during validation
+                df['plate_number'] = parsed_data.apply(lambda x: x[3] if x else None)
+                
+                # Remove the original Account column - it should not be uploaded (UPLOAD VIEW)
+                df = df.drop(columns=[account_col], errors='ignore')
+            
+            # Helper function to extract plate number from any text using the same patterns
+            def extract_plate_from_text(text_value):
+                """Extract plate number from any text value using the same patterns as parse_account_column"""
+                if pd.isna(text_value) or text_value == '':
+                    return None
+                
+                text_str = str(text_value).strip()
+                text_upper = text_str.upper()
+                
+                # Pattern 1: Letters followed by numbers (with optional spaces/hyphens between them)
+                plate_pattern1 = r'([A-Z]{2,4}[\s\-]*\d{3,6})'
+                # Pattern 2: Numbers followed by numbers (with REQUIRED separator)
+                plate_pattern2 = r'(\d{3,4}[\s\-]+\d{3,9})'
+                # Pattern 3: More flexible pattern for alphanumeric plates
+                plate_pattern3 = r'([A-Z0-9]{4,12})'
+                
+                # Try pattern 1 first (letters + numbers)
+                plate_match = re.search(plate_pattern1, text_upper)
+                if plate_match:
+                    return plate_match.group(1).replace(' ', '').replace('-', '').upper()
+                
+                # Try pattern 2 (numbers + numbers with separator)
+                all_matches = re.findall(plate_pattern2, text_upper)
+                if all_matches:
+                    return all_matches[-1].replace(' ', '').replace('-', '').upper()
+                
+                # Try pattern 3 (any alphanumeric sequence that looks like a plate)
+                all_matches = re.findall(plate_pattern3, text_upper)
+                if all_matches:
+                    potential_plates = [m for m in all_matches if sum(c.isdigit() for c in m) >= 3]
+                    if potential_plates:
+                        return potential_plates[-1].replace(' ', '').replace('-', '').upper()
+                
+                return None
+            
+            # If plate_number is None for any row, search ALL other columns for plate numbers
+            if 'plate_number' in df.columns:
+                # Find rows where plate_number is None
+                missing_plate_mask = df['plate_number'].isna() | (df['plate_number'] == '') | (df['plate_number'] == None)
+                
+                if missing_plate_mask.any():
+                    # Search in ALL other columns (skip plate_number, account_number, account_type, truck_type)
+                    columns_to_search = []
+                    priority_columns = []
+                    other_columns = []
+                    
+                    for col in df.columns:
+                        col_lower = col.lower().strip()
+                        # Skip columns we've already processed
+                        if col in ['plate_number', 'account_number', 'account_type', 'truck_type']:
+                            continue
+                        # Priority columns: Remarks, Description, unnamed columns
+                        if 'remark' in col_lower or 'description' in col_lower or 'unnamed' in col_lower:
+                            priority_columns.append(col)
+                        else:
+                            other_columns.append(col)
+                    
+                    # Combine: priority columns first, then other columns
+                    columns_to_search = priority_columns + other_columns
+                    
+                    # For each row with missing plate_number, search the columns
+                    for idx in df[missing_plate_mask].index:
+                        for col in columns_to_search:
+                            if col in df.columns:
+                                plate_from_col = extract_plate_from_text(df.at[idx, col])
+                                if plate_from_col:
+                                    df.at[idx, 'plate_number'] = plate_from_col
+                                    break  # Found a plate number, move to next row
+            
+            # Validate account_type against /api/v1/account-types/ endpoint (UPLOAD VIEW)
+            # Get valid account types from AccountType model
+            valid_account_types = set(AccountType.objects.values_list('name', flat=True))
+            
+            if 'account_type' in df.columns:
+                def validate_account_type(account_type_value):
+                    if pd.isna(account_type_value) or account_type_value == '' or account_type_value is None:
+                        return None
+                    account_type_str = str(account_type_value).strip()
+                    # Check if it's a valid account type (case-insensitive)
+                    for valid_type in valid_account_types:
+                        if account_type_str.lower() == valid_type.lower():
+                            return valid_type
+                    # If not found, return None (invalid account type - not in endpoint)
+                    return None
+                
+                df['account_type'] = df['account_type'].apply(validate_account_type)
+            
+            # Validate truck_type and plate_number against /api/v1/trucks/ endpoint (UPLOAD VIEW)
+            # Get valid trucks from Truck model
+            valid_trucks = Truck.objects.select_related('truck_type').all()
+            
+            # Standardize plate number function - removes spaces and hyphens for comparison
+            def standardize_plate(plate_str):
+                if pd.isna(plate_str) or plate_str == '' or plate_str is None:
+                    return None
+                # Remove all spaces, hyphens, underscores, and convert to uppercase for comparison
+                return str(plate_str).strip().upper().replace(' ', '').replace('-', '').replace('_', '')
+            
+            # Create a mapping of normalized plate_number -> (original_plate_number, truck_type_name, truck_object)
+            truck_plate_map = {}
+            truck_type_names = set()
+            for truck in valid_trucks:
+                if truck.plate_number:
+                    plate_key = standardize_plate(truck.plate_number)
+                    # Store original plate number, truck type, and truck object
+                    truck_plate_map[plate_key] = {
+                        'plate_number': truck.plate_number,  # Original format from database
+                        'truck_type': truck.truck_type.name if truck.truck_type else None,
+                        'truck': truck
+                    }
+                    if truck.truck_type:
+                        truck_type_names.add(truck.truck_type.name)
+            
+            # Validate truck_type and plate_number - both must exist in /api/v1/trucks/
+            # Always validate if plate_number or truck_type columns exist (even if empty)
+            def validate_truck_data(row):
+                # Get parsed plate number (may already be normalized during parsing, but normalize again to be sure)
+                parsed_plate = row.get('plate_number') if 'plate_number' in df.columns else None
+                plate_num_normalized = standardize_plate(parsed_plate)
+                truck_type_str = str(row.get('truck_type')).strip() if 'truck_type' in df.columns and not pd.isna(row.get('truck_type')) and str(row.get('truck_type')).strip() != '' else None
+                
+                # If plate_number is provided, validate it exists in trucks endpoint
+                if plate_num_normalized:
+                    # Normalize the parsed plate again to ensure it matches (handles "1101-939583" -> "1101939583")
+                    truck_data = truck_plate_map.get(plate_num_normalized)
+                    
+                    if truck_data:
+                        # Found matching truck in endpoint
+                        original_plate = truck_data['plate_number']
+                        db_truck_type = truck_data['truck_type']
+                        
+                        # If truck_type is also provided, validate it matches the truck's type
+                        if truck_type_str:
+                            if db_truck_type and db_truck_type.lower() == truck_type_str.lower():
+                                return db_truck_type, original_plate
+                            else:
+                                # Plate exists but truck_type doesn't match - still return plate with correct truck_type
+                                # The truck_type from the endpoint takes precedence
+                                return db_truck_type, original_plate
+                        else:
+                            # Only plate_number provided, return truck's type and original plate number
+                            return db_truck_type, original_plate
+                    else:
+                        # Plate number not found in trucks endpoint - return None
+                        return None, None
+                elif truck_type_str:
+                    # Only truck_type provided, validate it exists in any truck
+                    if truck_type_str.lower() in [t.lower() for t in truck_type_names]:
+                        # Return the canonical truck type name
+                        for valid_type in truck_type_names:
+                            if valid_type.lower() == truck_type_str.lower():
+                                return valid_type, None
+                    else:
+                        # Truck type not found in trucks endpoint
+                        return None, None
+                
+                # No plate or truck_type provided, keep existing values
+                return row.get('truck_type') if 'truck_type' in df.columns else None, row.get('plate_number') if 'plate_number' in df.columns else None
+            
+            # Apply validation to each row - UPLOAD VIEW
+            if 'plate_number' in df.columns or 'truck_type' in df.columns:
+                validated_data = df.apply(validate_truck_data, axis=1)
+                # Extract truck_type and plate_number from tuples, handling None properly
+                df['truck_type'] = validated_data.apply(lambda x: x[0] if x and x[0] is not None else None)
+                df['plate_number'] = validated_data.apply(lambda x: x[1] if x and x[1] is not None else None)
+            
+            # Map Excel columns to model fields (handle various column name formats) - UPLOAD VIEW
+            # First, define columns to drop (not needed for newledger.xlsx format)
+            columns_to_drop_list = []
+            for col in df.columns:
+                col_lower = col.lower().strip()
+                # Drop columns that are not needed
+                if any(keyword in col_lower for keyword in [
+                    'applied to invoice', 'item code', 'item type', 'cost', 
+                    'payment type', 'customer', 'supplier', 'employee', 
+                    'cash account', 'check no', 'check date', 'location', 
+                    'project', 'balance'
+                ]):
+                    # But keep if it's "Reference No." which we'll handle separately
+                    if 'reference no' not in col_lower:
+                        columns_to_drop_list.append(col)
+            
+            # Also drop "QTY", "Price", "Description" (old), "Item" if they exist as separate columns
+            # (we'll use Type as description, and QTY/Price from new format if needed)
+            for col in df.columns:
+                col_lower = col.lower().strip()
+                if col_lower == 'qty' or col_lower == 'item':
+                    columns_to_drop_list.append(col)
+                # Drop old "Description" if we have "Type" column (Type is the new description)
+                if col_lower == 'description' and any('type' in c.lower() and 'account' not in c.lower() and 'item' not in c.lower() for c in df.columns):
+                    columns_to_drop_list.append(col)
+            
+            column_mapping = {}
+            for col in df.columns:
+                # Skip columns we're dropping
+                if col in columns_to_drop_list:
+                    continue
+                    
+                col_lower = col.lower().strip()
+                
+                # Map Account column - will be parsed separately
+                if 'account' in col_lower and 'number' not in col_lower and 'type' not in col_lower:
+                    # This will be parsed, not mapped directly
+                    continue
+                elif 'account' in col_lower and 'number' in col_lower:
+                    column_mapping[col] = 'account_number'
+                elif 'account' in col_lower and 'type' in col_lower and 'account_number' not in df.columns:
+                    column_mapping[col] = 'account_type'
+                elif 'truck' in col_lower and 'type' in col_lower and 'truck_type' not in df.columns:
+                    column_mapping[col] = 'truck_type'
+                elif ('plate' in col_lower or 'truck plate' in col_lower) and 'plate_number' not in df.columns:
+                    column_mapping[col] = 'plate_number'
+                # Map "Type" column to "description" (new format - Type is the description)
+                elif col_lower == 'type' or (col_lower == 'type' and 'item' not in col_lower):
+                    column_mapping[col] = 'description'
+                # Also handle old "Description" column if Type doesn't exist
+                elif 'description' in col_lower and 'description' not in column_mapping.values():
+                    column_mapping[col] = 'description'
+                elif 'debit' in col_lower:
+                    column_mapping[col] = 'debit'
+                elif 'credit' in col_lower:
+                    column_mapping[col] = 'credit'
+                elif 'final' in col_lower and ('total' in col_lower or 'tc' in col_lower):
+                    column_mapping[col] = 'final_total'
+                elif 'remarks' in col_lower:
+                    column_mapping[col] = 'remarks'
+                # Map "RR No." to reference_number (new format)
+                elif 'rr no' in col_lower or col_lower == 'rr no.':
+                    column_mapping[col] = 'reference_number'
+                # Also handle old "Reference No." or "Reference Number" 
+                elif ('reference no' in col_lower or 'reference number' in col_lower) and 'reference_number' not in column_mapping.values():
+                    column_mapping[col] = 'reference_number'
+                elif 'date' in col_lower:
+                    column_mapping[col] = 'date'
+                elif 'quantity' in col_lower:
+                    column_mapping[col] = 'quantity'
+                elif 'price' in col_lower:
+                    column_mapping[col] = 'price'
+                elif 'driver' in col_lower:
+                    column_mapping[col] = 'driver'
+                elif 'route' in col_lower:
+                    column_mapping[col] = 'route'
+                elif 'front' in col_lower and 'load' in col_lower:
+                    column_mapping[col] = 'front_load'
+                elif 'back' in col_lower and 'load' in col_lower:
+                    column_mapping[col] = 'back_load'
+            
+            # If no description column was found, check Unnamed columns for description-like data
+            if 'description' not in column_mapping.values():
+                for col in df.columns:
+                    if col in columns_to_drop_list:
+                        continue
+                    if 'unnamed' in col.lower():
+                        # Check if this column contains description-like data
+                        # Sample a few non-null values to determine if it's a description column
+                        sample_values = df[col].dropna().astype(str).head(10).tolist()
+                        # Check if values contain common description keywords
+                        description_keywords = ['beginning balance', 'receive inventory', 'inventory withdrawal', 'funds', 'transfer']
+                        if any(any(keyword in str(val).lower() for keyword in description_keywords) for val in sample_values):
+                            column_mapping[col] = 'description'
+                            break
+            
+            # Drop unwanted columns BEFORE renaming
+            df = df.drop(columns=columns_to_drop_list, errors='ignore')
             
             # Rename columns
             df = df.rename(columns=column_mapping)
             
-            # Remove rows with 'Total for' in any column
-            df = df[~df.astype(str).apply(lambda x: x.str.contains('Total for', case=False, na=False)).any(axis=1)]
+            # Handle "Beginning Balance" - set ALL numeric fields to 0 (but don't delete the row)
+            # Search ALL columns for "Beginning Balance" text BEFORE removing Unnamed columns
+            # This ensures we catch "Beginning Balance" even if it's in an "Unnamed" column
+            beginning_balance_mask = df.astype(str).apply(lambda x: x.str.contains('Beginning Balance', case=False, na=False)).any(axis=1)
             
-            # Set Beginning Balance values to 0
-            beginning_balance_mask = df['description'].astype(str).str.contains('Beginning Balance', case=False, na=False)
-            df.loc[beginning_balance_mask, 'debit'] = 0
-            df.loc[beginning_balance_mask, 'credit'] = 0
-            df.loc[beginning_balance_mask, 'final_total'] = 0
+            # Set all numeric/decimal fields to 0
+            # Use original column names first, then mapped names
+            numeric_field_names = ['debit', 'credit', 'final_total', 'Debit', 'Credit', 'Final Total', 'Final Total', 'QTY (Fuel)', 'Unit Cost']
+            for field in numeric_field_names:
+                if field in df.columns:
+                    # Ensure we convert to numeric first, then set to 0
+                    df[field] = pd.to_numeric(df[field], errors='coerce')
+                    df.loc[beginning_balance_mask, field] = 0
             
-            # Enhanced parsing functions based on the image data patterns
+            # Remove any remaining Account-related columns that aren't the parsed ones (Account, Account.1, etc.) - UPLOAD VIEW
+            # But only drop if they exist and haven't been mapped yet
+            columns_to_drop = [col for col in df.columns if col.lower().startswith('account') 
+                              and col.lower() not in ['account_number', 'account_type'] 
+                              and col not in column_mapping]
+            df = df.drop(columns=columns_to_drop, errors='ignore')
+            
+            # Remove any Unnamed columns - UPLOAD VIEW (but keep description if it was mapped from Unnamed)
+            columns_to_drop = [col for col in df.columns if 'unnamed' in col.lower() and col not in column_mapping]
+            df = df.drop(columns=columns_to_drop, errors='ignore')
+            
+            # Drop old "Reference No." if we've mapped "RR No." to reference_number
+            if 'reference_number' in column_mapping.values():
+                # Find which column was mapped to reference_number
+                mapped_ref_col = [col for col, mapped in column_mapping.items() if mapped == 'reference_number']
+                if mapped_ref_col:
+                    # Drop other reference columns that weren't mapped
+                    ref_cols_to_drop = [col for col in df.columns 
+                                       if ('reference' in col.lower() or 'rr no' in col.lower()) 
+                                       and col not in mapped_ref_col 
+                                       and col not in column_mapping]
+                    df = df.drop(columns=ref_cols_to_drop, errors='ignore')
+            
+            # Handle "Beginning Balance" again after column mapping (to catch mapped column names)
+            beginning_balance_mask = df.astype(str).apply(lambda x: x.str.contains('Beginning Balance', case=False, na=False)).any(axis=1)
+            numeric_fields = ['debit', 'credit', 'final_total', 'quantity', 'price']
+            for field in numeric_fields:
+                if field in df.columns:
+                    # Ensure we convert to numeric first, then set to 0
+                    df[field] = pd.to_numeric(df[field], errors='coerce')
+                    df.loc[beginning_balance_mask, field] = 0
+            
+            # Enhanced parsing functions based on the image data patterns - UPLOAD VIEW
             def extract_driver_from_remarks(remarks):
                 if pd.isna(remarks) or remarks is None:
                     return None
@@ -601,73 +1510,146 @@ class TruckingAccountUploadView(APIView):
                 return None
 
             def extract_loads_from_remarks(remarks):
+                """
+                Extract front and back loads ONLY if they appear in a slash pattern, e.g. 'Strike/Cement'.
+                Ignores all other forms such as 'deliver ug cemento' or 'backload humay'.
+                Validates against LoadType database.
+                """
                 if pd.isna(remarks) or remarks is None:
                     return None, None
                 remarks_str = str(remarks)
-                
+
                 front_load = None
                 back_load = None
                 
-                # Pattern 1: "Strike/Cement:", "RH Holcim/Cement:" - most specific pattern
-                # This matches: colon, space, load1/load2, colon
-                load_pattern_specific = r':\s*([A-Za-z\s]+)/([A-Za-z\s]+):'
-                match = re.search(load_pattern_specific, remarks_str)
-                if match:
-                    potential_front = match.group(1).strip()
-                    potential_back = match.group(2).strip()
+                # Get valid load types from database
+                valid_load_types = [lt.name for lt in LoadType.objects.all()]
+
+                # Helper function to clean load value - remove route names, delivery words, etc.
+                def clean_load_extracted(load_str):
+                    """Clean extracted load value by removing route names and delivery words"""
+                    if not load_str:
+                        return None
                     
-                    # Validate both loads
-                    if is_valid_load(potential_front) and is_valid_load(potential_back):
-                        return clean_load_value(potential_front), clean_load_value(potential_back)
+                    cleaned = str(load_str).strip()
+                    
+                    # Remove route indicators (PAG-, DUMINGAG, etc.)
+                    route_patterns = [
+                        r'\bPAG-[A-Z]+\b',
+                        r'\bDUMINGAG\b',
+                        r'\bDIMATALING\b',
+                        r'\bCDO\b',
+                        r'\bILIGAN\b',
+                        r'\bOPEX\b',
+                        r'\bPAGADIAN\b'
+                    ]
+                    for pattern in route_patterns:
+                        cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+                    
+                    # Remove delivery/action words
+                    delivery_words = [
+                        r'\bdeliver\b',
+                        r'\bDeliver\b',
+                        r'\bDELIVER\b',
+                        r'\bpara\b',
+                        r'\bPara\b',
+                        r'\bsa\b',
+                        r'\bto\b',
+                        r'\bug\b',
+                        r'\bni\b',
+                        r'\bmao\b'
+                    ]
+                    for word in delivery_words:
+                        cleaned = re.sub(word, '', cleaned, flags=re.IGNORECASE)
+                    
+                    # Remove numbers and special characters at the end
+                    cleaned = re.sub(r'[:\.,;]+$', '', cleaned)
+                    cleaned = re.sub(r'\s+\+\d+.*$', '', cleaned)  # Remove "+165ltrs" etc.
+                    cleaned = re.sub(r'\s+\d+.*$', '', cleaned)  # Remove trailing numbers
+                    
+                    # Clean up multiple spaces
+                    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+                    
+                    return cleaned if cleaned else None
+
+                # Helper function to get Strike load type from database
+                def get_strike_load():
+                    """Get Strike load type from database, case-insensitive"""
+                    strike_load = next((lt for lt in valid_load_types if lt.lower() == 'strike'), None)
+                    return strike_load if strike_load else 'Strike'  # Fallback to 'Strike' if not in DB
                 
-                # Pattern 2: "Strike/Cement" at end of string (no trailing colon)
+                # Helper function to handle single load with default to Strike
+                def handle_single_load(front, back):
+                    """Handle case where one load is valid and other is missing - default missing to Strike"""
+                    front_valid = front and is_valid_load(front, valid_load_types)
+                    back_valid = back and is_valid_load(back, valid_load_types)
+                    
+                    if front_valid and back_valid:
+                        # Both valid - return both
+                        return clean_load_value(front, valid_load_types), clean_load_value(back, valid_load_types)
+                    elif front_valid and not back_valid:
+                        # Front valid, back missing/invalid - set back to "Strike"
+                        strike_load = get_strike_load()
+                        return clean_load_value(front, valid_load_types), strike_load
+                    elif back_valid and not front_valid:
+                        # Back valid, front missing/invalid - set front to "Strike"
+                        strike_load = get_strike_load()
+                        return strike_load, clean_load_value(back, valid_load_types)
+                    return None, None
+
+                # Pattern 1: "load1/load2:" - with trailing colon (most common)
+                # Examples: "Strike/Cement:", "RH Holcim/Cement:", "RH Holcim/Backload CDO:", "Strike/cemento:"
+                load_pattern_with_colon = r':\s*([A-Za-z\s]+)/([A-Za-z\s]+):'
+                match = re.search(load_pattern_with_colon, remarks_str)
+                if match:
+                    potential_front = clean_load_extracted(match.group(1))
+                    potential_back = clean_load_extracted(match.group(2))
+                    result = handle_single_load(potential_front, potential_back)
+                    if result[0] and result[1]:
+                        return result
+
+                # Pattern 2: "load1/load2" at end of string (no trailing colon)
+                # Examples: "Strike/Cement", "Cement/Backload CDO"
                 load_pattern_end = r':\s*([A-Za-z\s]+)/([A-Za-z\s]+)\s*$'
                 match = re.search(load_pattern_end, remarks_str)
                 if match:
-                    potential_front = match.group(1).strip()
-                    potential_back = match.group(2).strip()
-                    
-                    if is_valid_load(potential_front) and is_valid_load(potential_back):
-                        return clean_load_value(potential_front), clean_load_value(potential_back)
-                
-                # Pattern 3: "deliver cemento backload humay" - delivery pattern
-                deliver_backload = r'deliver\s+([a-zA-Z]+)\s+backload\s+([a-zA-Z]+)'
-                match = re.search(deliver_backload, remarks_str, re.IGNORECASE)
+                    potential_front = clean_load_extracted(match.group(1))
+                    potential_back = clean_load_extracted(match.group(2))
+                    result = handle_single_load(potential_front, potential_back)
+                    if result[0] and result[1]:
+                        return result
+
+                # Pattern 3: "load1/load2" followed by text (no colon, but with separator words)
+                # Examples: "Strike/Cement deliver to caluma", "Strike/Cement +120ltrs", "RH Holcim/Cement DUMINGAG Deliver"
+                load_pattern_with_text = r':\s*([A-Za-z\s]+)/([A-Za-z\s]+?)(?:\s+(?:deliver|Deliver|DELIVER|para|Para|sa|to|ug|\+|:|\d|DUMINGAG|DIMATALING|PAG-|$))'
+                match = re.search(load_pattern_with_text, remarks_str, re.IGNORECASE)
                 if match:
-                    potential_front = match.group(1).strip()
-                    potential_back = match.group(2).strip()
-                    
-                    if is_valid_load(potential_front) and is_valid_load(potential_back):
-                        return clean_load_value(potential_front), clean_load_value(potential_back)
-                
-                # Pattern 4: Single load - "deliver cemento" or "deliver ug cemento"
-                single_deliver = r'deliver\s+(?:ug\s+)?([a-zA-Z]+)'
-                match = re.search(single_deliver, remarks_str, re.IGNORECASE)
+                    potential_front = clean_load_extracted(match.group(1))
+                    potential_back = clean_load_extracted(match.group(2))
+                    result = handle_single_load(potential_front, potential_back)
+                    if result[0] and result[1]:
+                        return result
+
+                # Pattern 4: "load1/load2" anywhere in the string with word boundaries
+                # Examples: "PAG-ILIGAN: Strike/Cement: additional notes"
+                load_pattern_general = r'\b([A-Za-z\s]{3,})/([A-Za-z\s]{3,})\b'
+                match = re.search(load_pattern_general, remarks_str)
                 if match:
-                    potential_load = match.group(1).strip()
-                    if is_valid_load(potential_load):
-                        return clean_load_value(potential_load), None
-                
-                # Pattern 5: "kuha humay" or "kuha ug humay" - pickup pattern
-                kuha_pattern = r'kuha\s+(?:ug\s+)?([a-zA-Z]+)'
-                match = re.search(kuha_pattern, remarks_str, re.IGNORECASE)
-                if match:
-                    potential_back = match.group(1).strip()
-                    if is_valid_load(potential_back):
-                        return front_load, clean_load_value(potential_back)
-                
-                # Pattern 6: Look for load patterns after route
-                # E.g., "PAG-ILIGAN: Strike/Cement:"
-                after_route = r'(?:PAG-[A-Z]+|DIMATALING|DUMINGAG):\s*([A-Za-z\s]+)/([A-Za-z\s]+)'
-                match = re.search(after_route, remarks_str, re.IGNORECASE)
-                if match:
-                    potential_front = match.group(1).strip()
-                    potential_back = match.group(2).strip()
-                    
-                    if is_valid_load(potential_front) and is_valid_load(potential_back):
-                        return clean_load_value(potential_front), clean_load_value(potential_back)
-                
-                return front_load, back_load
+                    potential_front = clean_load_extracted(match.group(1))
+                    potential_back = clean_load_extracted(match.group(2))
+
+                    # Make sure neither part looks like a route or driver name
+                    route_indicators = ['PAG-', 'CDO', 'ILIGAN', 'OPEX', 'PAGADIAN', 'DUMINGAG', 'DIMATALING']
+                    is_route = any(indicator in (potential_front or '').upper() or indicator in (potential_back or '').upper()
+                                for indicator in route_indicators)
+
+                    if not is_route:
+                        result = handle_single_load(potential_front, potential_back)
+                        if result[0] and result[1]:
+                            return result
+
+                # No slash pattern found - return None for both
+                return None, None
 
             # Apply parsing to extract driver, route, front_load, back_load from remarks
             # Always extract from remarks to override any existing values
@@ -765,12 +1747,77 @@ class TruckingAccountUploadView(APIView):
                         existing_route = Route.objects.filter(name__iexact=route_name_raw).first()
                         route_instance = existing_route or Route.objects.create(name=route_name_raw)
 
+                    # Resolve Truck by plate number, truck type, and company
+                    truck_instance = None
+                    plate_number = standardize_plate_number(row.get('plate_number', ''))
+                    truck_type_str = str(row.get('truck_type', '')).strip() if pd.notna(row.get('truck_type')) else ''
+                    company_str = str(row.get('company', '')).strip() if pd.notna(row.get('company')) else ''
+                    
+                    if plate_number:
+                        # Get or create TruckType if provided
+                        truck_type_instance = None
+                        if truck_type_str:
+                            truck_type_instance, _ = TruckType.objects.get_or_create(name=truck_type_str)
+                        
+                        # Check if truck already exists
+                        existing_truck = Truck.objects.filter(plate_number=plate_number).first()
+                        
+                        if existing_truck:
+                            # Update existing truck if new data is provided
+                            updated = False
+                            if truck_type_instance and not existing_truck.truck_type:
+                                existing_truck.truck_type = truck_type_instance
+                                updated = True
+                            elif truck_type_instance and existing_truck.truck_type and existing_truck.truck_type.name != truck_type_str:
+                                existing_truck.truck_type = truck_type_instance
+                                updated = True
+                            
+                            if company_str and not existing_truck.company:
+                                existing_truck.company = company_str
+                                updated = True
+                            elif company_str and existing_truck.company != company_str:
+                                existing_truck.company = company_str
+                                updated = True
+                            
+                            if updated:
+                                existing_truck.save()
+                            
+                            truck_instance = existing_truck
+                        else:
+                            # Create new truck
+                            truck_instance = Truck.objects.create(
+                                plate_number=plate_number,
+                                truck_type=truck_type_instance,
+                                company=company_str if company_str else None
+                            )
+
+                    # Resolve AccountType by name (create if not exist)
+                    account_type_instance = None
+                    if row.get('account_type') and str(row.get('account_type')).strip() != '':
+                        account_type_name = str(row.get('account_type')).strip()
+                        account_type_instance, _ = AccountType.objects.get_or_create(name=account_type_name)
+
+                    # Resolve LoadType for front_load by name (create if not exist)
+                    front_load_instance = None
+                    if row.get('front_load') and str(row.get('front_load')).strip() != '':
+                        front_load_raw = str(row.get('front_load')).strip()
+                        front_load_cleaned = clean_load_value(front_load_raw)
+                        if front_load_cleaned:
+                            front_load_instance, _ = LoadType.objects.get_or_create(name=front_load_cleaned)
+
+                    # Resolve LoadType for back_load by name (create if not exist)
+                    back_load_instance = None
+                    if row.get('back_load') and str(row.get('back_load')).strip() != '':
+                        back_load_raw = str(row.get('back_load')).strip()
+                        back_load_cleaned = clean_load_value(back_load_raw)
+                        if back_load_cleaned:
+                            back_load_instance, _ = LoadType.objects.get_or_create(name=back_load_cleaned)
+
                     # Create TruckingAccount instance
                     account = TruckingAccount(
                         account_number=row.get('account_number', ''),
-                        account_type=row.get('account_type', ''),
-                        truck_type=row.get('truck_type', ''),
-                        plate_number=standardize_plate_number(row.get('plate_number', '')),
+                        account_type=account_type_instance,
+                        truck=truck_instance,
                         description=row.get('description', ''),
                         debit=row.get('debit', 0),
                         credit=row.get('credit', 0),
@@ -782,8 +1829,8 @@ class TruckingAccountUploadView(APIView):
                         price=row.get('price') if not pd.isna(row.get('price')) and row.get('price') != 0 else None,
                         driver=driver_instance,
                         route=route_instance,
-                        front_load=row.get('front_load', '') if row.get('front_load') != '' else None,
-                        back_load=row.get('back_load', '') if row.get('back_load') != '' else None,
+                        front_load=front_load_instance,
+                        back_load=back_load_instance,
                     )
                     
                     account.save()
@@ -797,6 +1844,106 @@ class TruckingAccountUploadView(APIView):
                 'message': f'Successfully created {created_count} trucking accounts',
                 'created_count': created_count,
                 'parsing_stats': parsing_stats,
+                'errors': errors[:10] if errors else []  # Show first 10 errors
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to process file: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class TruckUploadView(APIView):
+    """
+    POST: Upload Excel file to bulk create/update trucks
+    Expected headers: TRUCK PLATE, Truck Type, Company
+    """
+    def post(self, request):
+        try:
+            if 'file' not in request.FILES:
+                return Response(
+                    {'error': 'No file provided'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            file = request.FILES['file']
+            
+            # Read Excel file
+            df = pd.read_excel(file)
+            
+            # Clean column names
+            df.columns = df.columns.str.strip()
+            
+            # Map Excel columns to expected names (case-insensitive)
+            column_mapping = {}
+            for col in df.columns:
+                col_lower = col.lower()
+                if col_lower in ['truck plate', 'plate', 'plate number', 'plate_number']:
+                    column_mapping[col] = 'plate_number'
+                elif col_lower in ['truck type', 'truck_type', 'type']:
+                    column_mapping[col] = 'truck_type'
+                elif col_lower in ['company']:
+                    column_mapping[col] = 'company'
+            
+            # Rename columns
+            df = df.rename(columns=column_mapping)
+            
+            # Track results
+            created_count = 0
+            updated_count = 0
+            error_count = 0
+            errors = []
+            
+            # Process each row
+            for index, row in df.iterrows():
+                try:
+                    # Get plate number (required)
+                    plate_number = standardize_plate_number(row.get('plate_number', ''))
+                    if not plate_number:
+                        errors.append(f"Row {index + 1}: Plate number is required")
+                        error_count += 1
+                        continue
+                    
+                    # Get truck type and company (optional)
+                    truck_type_str = str(row.get('truck_type', '')).strip() if pd.notna(row.get('truck_type')) else ''
+                    company_str = str(row.get('company', '')).strip() if pd.notna(row.get('company')) else ''
+                    
+                    # Resolve TruckType if provided
+                    truck_type_instance = None
+                    if truck_type_str:
+                        truck_type_instance, _ = TruckType.objects.get_or_create(name=truck_type_str)
+                    
+                    # Check if truck already exists
+                    existing_truck = Truck.objects.filter(plate_number=plate_number).first()
+                    
+                    if existing_truck:
+                        # Update existing truck
+                        if truck_type_instance:
+                            existing_truck.truck_type = truck_type_instance
+                        if company_str:
+                            existing_truck.company = company_str
+                        existing_truck.save()
+                        updated_count += 1
+                    else:
+                        # Create new truck
+                        Truck.objects.create(
+                            plate_number=plate_number,
+                            truck_type=truck_type_instance,
+                            company=company_str if company_str else None
+                        )
+                        created_count += 1
+                    
+                except Exception as e:
+                    errors.append(f"Row {index + 1}: {str(e)}")
+                    error_count += 1
+                    continue
+            
+            return Response({
+                'message': f'Successfully processed {created_count + updated_count} trucks',
+                'created_count': created_count,
+                'updated_count': updated_count,
+                'error_count': error_count,
                 'errors': errors[:10] if errors else []  # Show first 10 errors
             }, status=status.HTTP_201_CREATED)
             
