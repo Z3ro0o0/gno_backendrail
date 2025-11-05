@@ -44,6 +44,7 @@ from .accounts_views import AccountsSummaryView, TruckingAccountSummaryView
 from .accounts_detail_views import AccountsDetailView
 from .trips_views import TripsView, UpdateTripFieldView
 from .allowance_transfer_view import AllowanceTransferView
+from .clear_trucking_view import ClearTruckingDataView
 
 urlpatterns = [
     # TruckType URLs
@@ -97,6 +98,7 @@ urlpatterns = [
     path('trucking/<int:pk>/', TruckingAccountDetailView.as_view(), name='trucking-detail'),
     path('trucking/upload/', TruckingAccountUploadView.as_view(), name='trucking-upload'),
     path('trucking/preview/', TruckingAccountPreviewView.as_view(), name='trucking-preview'),
+    path('trucking/clear/', ClearTruckingDataView.as_view(), name='trucking-clear'),
     
     
     path('drivers/summary/', DriversSummaryView.as_view(), name='drivers-summary'),
