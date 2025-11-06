@@ -14,5 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy project files
 COPY . .
 
-# Run Django with Gunicorn using Railway's PORT variable
-CMD gunicorn ong_backend.wsgi:application --bind 0.0.0.0:$PORT
+# Make start script executable
+RUN chmod +x start.sh
+
+# Use the start script
+CMD ["./start.sh"]
