@@ -1,4 +1,1 @@
-web: gunicorn ong_backend.wsgi:application --bind 0.0.0.0:8000
-
-
-
+web: sh -c 'gunicorn ong_backend.wsgi:application --bind 0.0.0.0:${PORT:-8000}'
