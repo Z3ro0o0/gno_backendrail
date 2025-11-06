@@ -1,0 +1,9 @@
+[phases.setup]
+nixPkgs = ["sqlite"]
+aptPkgs = ["sqlite3", "libsqlite3-dev"]
+
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
+
+[phases.build]
+cmds = ["chmod +x start.sh", "python manage.py collectstatic --no-input"]
