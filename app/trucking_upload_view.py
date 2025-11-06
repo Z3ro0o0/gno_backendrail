@@ -327,6 +327,10 @@ class TruckingAccountPreviewView(APIView):
                     return None
                 
                 df['account_type'] = df['account_type'].apply(validate_account_type)
+                
+                # Filter out rows with invalid account types (None or empty) - PREVIEW VIEW
+                # Only keep rows where account_type is valid (not None and not empty)
+                df = df[df['account_type'].notna() & (df['account_type'] != '')]
             
             # Validate truck_type and plate_number against /api/v1/trucks/ endpoint (PREVIEW VIEW)
             # Get valid trucks from Truck model
@@ -555,24 +559,40 @@ class TruckingAccountPreviewView(APIView):
                     df[field] = pd.to_numeric(df[field], errors='coerce')
                     df.loc[beginning_balance_mask, field] = 0
             
+            # Get valid drivers from database - PREVIEW VIEW
+            valid_drivers = set(Driver.objects.values_list('name', flat=True))
+            
             # Include the same enhanced parsing functions here - PREVIEW VIEW
             def extract_driver_from_remarks(remarks):
                 if pd.isna(remarks) or remarks is None:
                     return None
                 remarks_str = str(remarks)
                 
-                # Known drivers list
-                drivers = [
+                # Get valid drivers from database (case-insensitive matching)
+                def is_valid_driver(driver_name):
+                    """Check if driver exists in database (case-insensitive)"""
+                    if not driver_name:
+                        return None
+                    driver_clean = str(driver_name).strip()
+                    for valid_driver in valid_drivers:
+                        if driver_clean.lower() == valid_driver.lower():
+                            return valid_driver  # Return the canonical name from database
+                    return None  # Driver not in database
+                
+                # Known drivers list - only for pattern matching, then validate against database
+                known_driver_patterns = [
                     'Edgardo Agapay', 'Romel Bantilan', 'Reynaldo Rizalda', 'Francis Ariglado',
                     'Roque Oling', 'Pablo Hamo', 'Albert Saavedra', 'Jimmy Oclarit', 'Nicanor',
                     'Arnel Duhilag', 'Benjamin Aloso', 'Roger', 'Joseph Bahan', 'Doming',
                     'Jun2x Campaña', 'Jun2x Toledo', 'Ronie Babanto'
                 ]
                 
-                # Pattern 1: Check for known drivers first (exact match)
-                for driver in drivers:
-                    if driver in remarks_str:
-                        return driver
+                # Pattern 1: Check for known drivers first (exact match) - then validate against database
+                for driver_pattern in known_driver_patterns:
+                    if driver_pattern in remarks_str:
+                        validated = is_valid_driver(driver_pattern)
+                        if validated:
+                            return validated
                 
                 # Pattern 2: Handle multiple drivers with "/" (e.g., "Jimmy Oclarit/Romel Bantilan")
                 # Look for pattern: "Name1/Name2:" before route
@@ -581,10 +601,15 @@ class TruckingAccountPreviewView(APIView):
                 if multi_match:
                     driver1 = multi_match.group(1).strip()
                     driver2 = multi_match.group(2).strip()
-                    # Verify at least one is a known driver
-                    for driver in drivers:
-                        if driver in driver1 or driver in driver2:
-                            return f"{driver1}/{driver2}"
+                    # Validate both against database
+                    validated1 = is_valid_driver(driver1)
+                    validated2 = is_valid_driver(driver2)
+                    if validated1 and validated2:
+                        return f"{validated1}/{validated2}"
+                    elif validated1:
+                        return validated1
+                    elif validated2:
+                        return validated2
                 
                 # Pattern 3: Extract driver from "LRO: XXLiters Fuel and Oil [DRIVER]:"
                 # This handles cases like "LRO: 140Liters Fuel and Oil Roque Oling:"
@@ -594,13 +619,10 @@ class TruckingAccountPreviewView(APIView):
                     potential_driver = lro_match.group(1).strip()
                     # Clean up and validate
                     if len(potential_driver) > 2 and not any(word in potential_driver.lower() for word in ['lro', 'liters', 'fuel', 'oil']):
-                        # Check if it's a known driver or looks like a name
-                        for driver in drivers:
-                            if driver.lower() in potential_driver.lower():
-                                return driver
-                        # If not known but looks like a name (2+ words), return it
-                        if len(potential_driver.split()) >= 2:
-                            return potential_driver
+                        # Validate against database
+                        validated = is_valid_driver(potential_driver)
+                        if validated:
+                            return validated
                 
                 # Pattern 4: Look for "Name:" pattern (but filter out routes and common words)
                 name_pattern = r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+):'
@@ -613,13 +635,10 @@ class TruckingAccountPreviewView(APIView):
                     # Skip common non-driver words
                     if any(word in potential_driver.lower() for word in ['lro', 'liters', 'fuel', 'oil', 'deliver', 'transfer']):
                         continue
-                    # Check if it's a known driver
-                    for driver in drivers:
-                        if driver.lower() == potential_driver.lower():
-                            return driver
-                    # If it has 2+ words and looks like a name, return it
-                    if len(potential_driver.split()) >= 2:
-                        return potential_driver
+                    # Validate against database
+                    validated = is_valid_driver(potential_driver)
+                    if validated:
+                        return validated
                 
                 return None
 
@@ -821,9 +840,58 @@ class TruckingAccountPreviewView(APIView):
             if 'back_load' in df.columns:
                 df['back_load'] = df['back_load'].astype('object')
             
+            # Validate drivers against database - only keep drivers that exist in database (PREVIEW VIEW)
+            if 'driver' in df.columns:
+                # Get valid drivers from database (case-insensitive matching)
+                valid_drivers_db = set(Driver.objects.values_list('name', flat=True))
+                
+                def validate_driver(driver_value):
+                    """Validate driver exists in database (case-insensitive)"""
+                    if pd.isna(driver_value) or driver_value == '' or driver_value is None:
+                        return None  # Empty driver is allowed
+                    driver_str = str(driver_value).strip()
+                    # Check if it's a valid driver (case-insensitive)
+                    for valid_driver in valid_drivers_db:
+                        if driver_str.lower() == valid_driver.lower():
+                            return valid_driver  # Return canonical name from database
+                    # Invalid driver - return None (but don't filter row, just clear driver)
+                    return None
+                
+                # Validate existing driver column values
+                df['driver'] = df['driver'].apply(validate_driver)
+            
+            # Validate load types against database - only keep loads that exist in database (PREVIEW VIEW)
+            if 'front_load' in df.columns or 'back_load' in df.columns:
+                # Get valid load types from database (case-insensitive matching)
+                valid_load_types_db = set(LoadType.objects.values_list('name', flat=True))
+                
+                def validate_load_type(load_value):
+                    """Validate load type exists in database (case-insensitive)"""
+                    if pd.isna(load_value) or load_value == '' or load_value is None:
+                        return None  # Empty load is allowed
+                    load_str = str(load_value).strip()
+                    # Clean the load value first
+                    load_cleaned = clean_load_value(load_str, valid_load_types_db)
+                    if load_cleaned:
+                        # Check if it's a valid load type (case-insensitive)
+                        for valid_load in valid_load_types_db:
+                            if load_cleaned.lower() == valid_load.lower():
+                                return valid_load  # Return canonical name from database
+                    # Invalid load - return None (but don't filter row, just clear load)
+                    return None
+                
+                # Validate existing load column values
+                if 'front_load' in df.columns:
+                    df['front_load'] = df['front_load'].apply(validate_load_type)
+                if 'back_load' in df.columns:
+                    df['back_load'] = df['back_load'].apply(validate_load_type)
+            
             # Apply parsing to extract driver, route, front_load, back_load from remarks
             # Always extract from remarks to override any existing values
             if 'remarks' in df.columns:
+                # Get valid load types for validation after extraction (PREVIEW VIEW)
+                valid_load_types_db_after_extraction = set(LoadType.objects.values_list('name', flat=True))
+                
                 for index, row in df.iterrows():
                     # Always extract driver from remarks if available
                     extracted_driver = extract_driver_from_remarks(row.get('remarks'))
@@ -840,20 +908,43 @@ class TruckingAccountPreviewView(APIView):
                     if extracted_driver and extracted_route:
                         extracted_front, extracted_back = extract_loads_from_remarks(row.get('remarks'))
                         if extracted_front:
-                            # Clean the front load value to remove extra text
-                            cleaned_front = clean_load_value(extracted_front)
+                            # Clean the front load value and validate against database
+                            cleaned_front = clean_load_value(extracted_front, valid_load_types_db_after_extraction)
                             if cleaned_front:
-                                df.at[index, 'front_load'] = cleaned_front
+                                # Validate against database
+                                for valid_load in valid_load_types_db_after_extraction:
+                                    if cleaned_front.lower() == valid_load.lower():
+                                        df.at[index, 'front_load'] = valid_load  # Use canonical name from database
+                                        break
                         if extracted_back:
-                            # Clean the back load value to remove extra text
-                            cleaned_back = clean_load_value(extracted_back)
+                            # Clean the back load value and validate against database
+                            cleaned_back = clean_load_value(extracted_back, valid_load_types_db_after_extraction)
                             if cleaned_back:
-                                df.at[index, 'back_load'] = cleaned_back
+                                # Validate against database
+                                for valid_load in valid_load_types_db_after_extraction:
+                                    if cleaned_back.lower() == valid_load.lower():
+                                        df.at[index, 'back_load'] = valid_load  # Use canonical name from database
+                                        break
             
-            # Invert final_total sign for hauling income accounts
+            # Calculate final_total from Debit and Credit if final_total column doesn't exist
+            if 'debit' in df.columns and 'credit' in df.columns:
+                # Convert to numeric, handling NaN values
+                df['debit'] = pd.to_numeric(df['debit'], errors='coerce').fillna(0)
+                df['credit'] = pd.to_numeric(df['credit'], errors='coerce').fillna(0)
+                
+                # If final_total column doesn't exist, create it from debit - credit
+                if 'final_total' not in df.columns:
+                    df['final_total'] = df['debit'] - df['credit']
+                else:
+                    # If final_total exists but is NaN/empty, calculate from debit - credit
+                    df['final_total'] = pd.to_numeric(df['final_total'], errors='coerce')
+                    df['final_total'] = df['final_total'].fillna(df['debit'] - df['credit'])
+            
+            # For Hauling Income accounts, ensure final_total is positive (use abs if negative)
             if 'account_type' in df.columns and 'final_total' in df.columns:
                 hauling_income_mask = df['account_type'].astype(str).str.contains('Hauling Income', case=False, na=False)
-                df.loc[hauling_income_mask, 'final_total'] = df.loc[hauling_income_mask, 'final_total'] * -1
+                # Apply abs() to make positive if negative
+                df.loc[hauling_income_mask, 'final_total'] = df.loc[hauling_income_mask, 'final_total'].apply(lambda x: abs(x) if x < 0 else x)
             
             # Define desired column order for preview
             desired_column_order = [
@@ -1168,6 +1259,10 @@ class TruckingAccountUploadView(APIView):
                     return None
                 
                 df['account_type'] = df['account_type'].apply(validate_account_type)
+                
+                # Filter out rows with invalid account types (None or empty) - UPLOAD VIEW
+                # Only keep rows where account_type is valid (not None and not empty)
+                df = df[df['account_type'].notna() & (df['account_type'] != '')]
             
             # Validate truck_type and plate_number against /api/v1/trucks/ endpoint (UPLOAD VIEW)
             # Get valid trucks from Truck model
@@ -1651,9 +1746,58 @@ class TruckingAccountUploadView(APIView):
                 # No slash pattern found - return None for both
                 return None, None
 
+            # Validate drivers against database - only keep drivers that exist in database (UPLOAD VIEW)
+            if 'driver' in df.columns:
+                # Get valid drivers from database (case-insensitive matching)
+                valid_drivers_db_upload = set(Driver.objects.values_list('name', flat=True))
+                
+                def validate_driver(driver_value):
+                    """Validate driver exists in database (case-insensitive)"""
+                    if pd.isna(driver_value) or driver_value == '' or driver_value is None:
+                        return None  # Empty driver is allowed
+                    driver_str = str(driver_value).strip()
+                    # Check if it's a valid driver (case-insensitive)
+                    for valid_driver in valid_drivers_db_upload:
+                        if driver_str.lower() == valid_driver.lower():
+                            return valid_driver  # Return canonical name from database
+                    # Invalid driver - return None (but don't filter row, just clear driver)
+                    return None
+                
+                # Validate existing driver column values
+                df['driver'] = df['driver'].apply(validate_driver)
+            
+            # Validate load types against database - only keep loads that exist in database (UPLOAD VIEW)
+            if 'front_load' in df.columns or 'back_load' in df.columns:
+                # Get valid load types from database (case-insensitive matching)
+                valid_load_types_db_upload = set(LoadType.objects.values_list('name', flat=True))
+                
+                def validate_load_type(load_value):
+                    """Validate load type exists in database (case-insensitive)"""
+                    if pd.isna(load_value) or load_value == '' or load_value is None:
+                        return None  # Empty load is allowed
+                    load_str = str(load_value).strip()
+                    # Clean the load value first
+                    load_cleaned = clean_load_value(load_str, valid_load_types_db_upload)
+                    if load_cleaned:
+                        # Check if it's a valid load type (case-insensitive)
+                        for valid_load in valid_load_types_db_upload:
+                            if load_cleaned.lower() == valid_load.lower():
+                                return valid_load  # Return canonical name from database
+                    # Invalid load - return None (but don't filter row, just clear load)
+                    return None
+                
+                # Validate existing load column values
+                if 'front_load' in df.columns:
+                    df['front_load'] = df['front_load'].apply(validate_load_type)
+                if 'back_load' in df.columns:
+                    df['back_load'] = df['back_load'].apply(validate_load_type)
+
             # Apply parsing to extract driver, route, front_load, back_load from remarks
             # Always extract from remarks to override any existing values
             if 'remarks' in df.columns:
+                # Get valid load types for validation after extraction (UPLOAD VIEW)
+                valid_load_types_db_after_extraction = set(LoadType.objects.values_list('name', flat=True))
+                
                 for index, row in df.iterrows():
                     # Always extract driver from remarks if available
                     extracted_driver = extract_driver_from_remarks(row.get('remarks'))
@@ -1670,15 +1814,23 @@ class TruckingAccountUploadView(APIView):
                     if extracted_driver and extracted_route:
                         extracted_front, extracted_back = extract_loads_from_remarks(row.get('remarks'))
                         if extracted_front:
-                            # Clean the front load value to remove extra text
-                            cleaned_front = clean_load_value(extracted_front)
+                            # Clean the front load value and validate against database
+                            cleaned_front = clean_load_value(extracted_front, valid_load_types_db_after_extraction)
                             if cleaned_front:
-                                df.at[index, 'front_load'] = cleaned_front
+                                # Validate against database
+                                for valid_load in valid_load_types_db_after_extraction:
+                                    if cleaned_front.lower() == valid_load.lower():
+                                        df.at[index, 'front_load'] = valid_load  # Use canonical name from database
+                                        break
                         if extracted_back:
-                            # Clean the back load value to remove extra text
-                            cleaned_back = clean_load_value(extracted_back)
+                            # Clean the back load value and validate against database
+                            cleaned_back = clean_load_value(extracted_back, valid_load_types_db_after_extraction)
                             if cleaned_back:
-                                df.at[index, 'back_load'] = cleaned_back
+                                # Validate against database
+                                for valid_load in valid_load_types_db_after_extraction:
+                                    if cleaned_back.lower() == valid_load.lower():
+                                        df.at[index, 'back_load'] = valid_load  # Use canonical name from database
+                                        break
             
             # Clean and convert data
             def clean_decimal(value):
@@ -1707,10 +1859,25 @@ class TruckingAccountUploadView(APIView):
                 if field in df.columns:
                     df[field] = df[field].astype(str).replace('nan', '').replace('None', '')
             
-            # Invert final_total sign for hauling income accounts
+            # Calculate final_total from Debit and Credit if final_total column doesn't exist
+            if 'debit' in df.columns and 'credit' in df.columns:
+                # Convert to numeric, handling NaN values
+                df['debit'] = pd.to_numeric(df['debit'], errors='coerce').fillna(0)
+                df['credit'] = pd.to_numeric(df['credit'], errors='coerce').fillna(0)
+                
+                # If final_total column doesn't exist, create it from debit - credit
+                if 'final_total' not in df.columns:
+                    df['final_total'] = df['debit'] - df['credit']
+                else:
+                    # If final_total exists but is NaN/empty, calculate from debit - credit
+                    df['final_total'] = pd.to_numeric(df['final_total'], errors='coerce')
+                    df['final_total'] = df['final_total'].fillna(df['debit'] - df['credit'])
+            
+            # For Hauling Income accounts, ensure final_total is positive (use abs if negative)
             if 'account_type' in df.columns and 'final_total' in df.columns:
                 hauling_income_mask = df['account_type'].astype(str).str.contains('Hauling Income', case=False, na=False)
-                df.loc[hauling_income_mask, 'final_total'] = df.loc[hauling_income_mask, 'final_total'] * -1
+                # Apply abs() to make positive if negative
+                df.loc[hauling_income_mask, 'final_total'] = df.loc[hauling_income_mask, 'final_total'].apply(lambda x: abs(x) if x < 0 else x)
             
             # Create accounts
             created_count = 0
@@ -1735,13 +1902,14 @@ class TruckingAccountUploadView(APIView):
                     if row.get('front_load') and row.get('front_load') != '':
                         parsing_stats['loads_extracted'] += 1
                     
-                    # Resolve Driver and Route by name (create if not exist, case-insensitive to prevent duplicates)
+                    # Resolve Driver by name (only use existing drivers from database, don't create new ones)
                     driver_instance = None
                     route_instance = None
                     if row.get('driver') and str(row.get('driver')).strip() != '':
                         driver_name_raw = str(row.get('driver')).strip()
-                        existing_driver = Driver.objects.filter(name__iexact=driver_name_raw).first()
-                        driver_instance = existing_driver or Driver.objects.create(name=driver_name_raw)
+                        # Only use existing drivers - don't create new ones
+                        driver_instance = Driver.objects.filter(name__iexact=driver_name_raw).first()
+                        # If driver not found in database, set to None (entry will still be uploaded without driver)
                     if row.get('route') and str(row.get('route')).strip() != '':
                         route_name_raw = str(row.get('route')).strip()
                         existing_route = Route.objects.filter(name__iexact=route_name_raw).first()
@@ -1797,21 +1965,25 @@ class TruckingAccountUploadView(APIView):
                         account_type_name = str(row.get('account_type')).strip()
                         account_type_instance, _ = AccountType.objects.get_or_create(name=account_type_name)
 
-                    # Resolve LoadType for front_load by name (create if not exist)
+                    # Resolve LoadType for front_load by name (only use existing loads from database, don't create new ones)
                     front_load_instance = None
                     if row.get('front_load') and str(row.get('front_load')).strip() != '':
                         front_load_raw = str(row.get('front_load')).strip()
                         front_load_cleaned = clean_load_value(front_load_raw)
                         if front_load_cleaned:
-                            front_load_instance, _ = LoadType.objects.get_or_create(name=front_load_cleaned)
+                            # Only use existing load types - don't create new ones
+                            front_load_instance = LoadType.objects.filter(name__iexact=front_load_cleaned).first()
+                            # If load not found in database, set to None (entry will still be uploaded without load)
 
-                    # Resolve LoadType for back_load by name (create if not exist)
+                    # Resolve LoadType for back_load by name (only use existing loads from database, don't create new ones)
                     back_load_instance = None
                     if row.get('back_load') and str(row.get('back_load')).strip() != '':
                         back_load_raw = str(row.get('back_load')).strip()
                         back_load_cleaned = clean_load_value(back_load_raw)
                         if back_load_cleaned:
-                            back_load_instance, _ = LoadType.objects.get_or_create(name=back_load_cleaned)
+                            # Only use existing load types - don't create new ones
+                            back_load_instance = LoadType.objects.filter(name__iexact=back_load_cleaned).first()
+                            # If load not found in database, set to None (entry will still be uploaded without load)
 
                     # Create TruckingAccount instance
                     account = TruckingAccount(
