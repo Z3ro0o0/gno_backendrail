@@ -1,3 +1,4 @@
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -562,6 +563,9 @@ class TruckingAccountPreviewView(APIView):
             # Get valid drivers from database - PREVIEW VIEW
             valid_drivers = set(Driver.objects.values_list('name', flat=True))
             
+            # Get valid routes from database - PREVIEW VIEW
+            valid_routes = set(Route.objects.values_list('name', flat=True))
+            
             # Include the same enhanced parsing functions here - PREVIEW VIEW
             def extract_driver_from_remarks(remarks):
                 if pd.isna(remarks) or remarks is None:
@@ -647,43 +651,54 @@ class TruckingAccountPreviewView(APIView):
                     return None
                 remarks_str = str(remarks)
                 
-                # Known routes list
-                routes = [
-                    'PAG-CDO', 'PAG-ILIGAN', 'Strike Holcim', 'PAG-ILIGAN STRIKE', 'PAG-CDO (CARGILL)',
-                    'PAG-CDO STRIKE', 'PAG-BUK', 'PAG-DIPLAHAN', 'PAG-MARANDING', 'PAG-COTABATO',
-                    'PAG-ZMBGA', 'Pag-COTABATO', 'Pag-AURORA', 'PAG-DIPOLOG', 'PAG-MOLAVE', 'PAGADIAN',
-                    'PAG-DIMATALING', 'PAG-DINAS', 'PAG-LABANGAN', 'PAG-MIDSALIP', 'PAG-OZAMIS',
-                    'PAG-OSMENIA', 'PAG-DUMINGAG', 'PAG-KUMALARANG', 'PAG-MAHAYAG', 'PAG-TAMBULIG',
-                    'PAG-SURIGAO', 'PAG-BUYOGAN', 'PAG-SAN PABLO', 'PAGADIAN-OPEX', 'CDO-OPEX',
-                    'PAG-BAYOG', 'PAG-LAKEWOOD', 'PAG-BUUG', 
-                    #'DIMATALING', 'DUMINGAG'
-                ]
+                # Get valid routes from database (case-insensitive matching)
+                def is_valid_route(route_name):
+                    """Check if route exists in database (case-insensitive)"""
+                    if not route_name:
+                        return None
+                    route_clean = str(route_name).strip()
+                    for valid_route in valid_routes:
+                        if route_clean.upper() == valid_route.upper():
+                            return valid_route  # Return the canonical name from database
+                    return None  # Route not in database
                 
-                # Pattern 1: Look for route with colon after it (e.g., "PAG-ILIGAN:")
-                # This is the most reliable pattern
-                route_with_colon = r'(PAG-[A-Z]+|DIMATALING|DUMINGAG|Strike\s+Holcim|CDO-OPEX|PAGADIAN-OPEX|PAGADIAN):'
-                match = re.search(route_with_colon, remarks_str, re.IGNORECASE)
-                if match:
-                    potential_route = match.group(1).strip()
-                    # Match against known routes (case-insensitive)
-                    for route in routes:
-                        if route.upper() == potential_route.upper():
-                            return route
+                # Pattern 1: Look for route with colon after it (e.g., "PAG-ILIGAN:" or "CDO-LNO:")
+                # This pattern matches: [A-Z]+-[A-Z]+ or any route format followed by colon
+                # First, try to match any route from database that appears with a colon
+                for route in valid_routes:
+                    # Escape special regex characters in route name
+                    route_escaped = re.escape(route)
+                    pattern = rf'{route_escaped}\s*:'
+                    match = re.search(pattern, remarks_str, re.IGNORECASE)
+                    if match:
+                        validated = is_valid_route(route)
+                        if validated:
+                            return validated
                 
-                # Pattern 2: Look for routes in specific contexts (after driver name)
-                # E.g., "Roque Oling: PAG-ILIGAN:" or after plate number
-                context_pattern = r':\s*(PAG-[A-Z]+|DIMATALING|DUMINGAG)[\s:]'
-                match = re.search(context_pattern, remarks_str, re.IGNORECASE)
-                if match:
+                # Pattern 2: Look for routes in specific contexts (after driver name or plate number)
+                # E.g., "Juan Dela Cruz: CDO-LNO:" or "LAH-2577: CDO-LNO:"
+                # Match pattern: ": [ROUTE]:" where ROUTE can be various formats
+                context_pattern = r':\s*([A-Z0-9]+(?:-[A-Z0-9]+)+|[A-Z\s]+?)\s*:'
+                matches = re.finditer(context_pattern, remarks_str, re.IGNORECASE)
+                for match in matches:
                     potential_route = match.group(1).strip()
-                    for route in routes:
-                        if route.upper() == potential_route.upper():
-                            return route
+                    # Skip if it looks like a driver name (has lowercase letters in middle)
+                    if re.search(r'[a-z]', potential_route) and len(potential_route.split()) > 1:
+                        continue
+                    validated = is_valid_route(potential_route)
+                    if validated:
+                        return validated
                 
                 # Pattern 3: Check for routes anywhere in the text (case-insensitive)
-                for route in routes:
-                    if route.upper() in remarks_str.upper():
-                        return route
+                # This is a fallback - check if any route name appears in the text
+                for route in valid_routes:
+                    route_escaped = re.escape(route)
+                    # Match route as whole word or with word boundaries
+                    pattern = rf'\b{route_escaped}\b'
+                    if re.search(pattern, remarks_str, re.IGNORECASE):
+                        validated = is_valid_route(route)
+                        if validated:
+                            return validated
                 
                 return None
 
@@ -1491,6 +1506,9 @@ class TruckingAccountUploadView(APIView):
                     df[field] = pd.to_numeric(df[field], errors='coerce')
                     df.loc[beginning_balance_mask, field] = 0
             
+            # Get valid routes from database - UPLOAD VIEW (before parsing functions)
+            valid_routes_upload = set(Route.objects.values_list('name', flat=True))
+            
             # Enhanced parsing functions based on the image data patterns - UPLOAD VIEW
             def extract_driver_from_remarks(remarks):
                 if pd.isna(remarks) or remarks is None:
@@ -1564,43 +1582,54 @@ class TruckingAccountUploadView(APIView):
                     return None
                 remarks_str = str(remarks)
                 
-                # Known routes list
-                routes = [
-                    'PAG-CDO', 'PAG-ILIGAN', 'Strike Holcim', 'PAG-ILIGAN STRIKE', 'PAG-CDO (CARGILL)',
-                    'PAG-CDO STRIKE', 'PAG-BUK', 'PAG-DIPLAHAN', 'PAG-MARANDING', 'PAG-COTABATO',
-                    'PAG-ZMBGA', 'Pag-COTABATO', 'Pag-AURORA', 'PAG-DIPOLOG', 'PAG-MOLAVE', 'PAGADIAN',
-                    'PAG-DIMATALING', 'PAG-DINAS', 'PAG-LABANGAN', 'PAG-MIDSALIP', 'PAG-OZAMIS',
-                    'PAG-OSMENIA', 'PAG-DUMINGAG', 'PAG-KUMALARANG', 'PAG-MAHAYAG', 'PAG-TAMBULIG',
-                    'PAG-SURIGAO', 'PAG-BUYOGAN', 'PAG-SAN PABLO', 'PAGADIAN-OPEX', 'CDO-OPEX',
-                    'PAG-BAYOG', 'PAG-LAKEWOOD', 'PAG-BUUG', 
-                    #'DIMATALING', 'DUMINGAG'
-                ]
+                # Get valid routes from database (case-insensitive matching)
+                def is_valid_route(route_name):
+                    """Check if route exists in database (case-insensitive)"""
+                    if not route_name:
+                        return None
+                    route_clean = str(route_name).strip()
+                    for valid_route in valid_routes_upload:
+                        if route_clean.upper() == valid_route.upper():
+                            return valid_route  # Return the canonical name from database
+                    return None  # Route not in database
                 
-                # Pattern 1: Look for route with colon after it (e.g., "PAG-ILIGAN:")
-                # This is the most reliable pattern
-                route_with_colon = r'(PAG-[A-Z]+|DIMATALING|DUMINGAG|Strike\s+Holcim|CDO-OPEX|PAGADIAN-OPEX|PAGADIAN):'
-                match = re.search(route_with_colon, remarks_str, re.IGNORECASE)
-                if match:
-                    potential_route = match.group(1).strip()
-                    # Match against known routes (case-insensitive)
-                    for route in routes:
-                        if route.upper() == potential_route.upper():
-                            return route
+                # Pattern 1: Look for route with colon after it (e.g., "PAG-ILIGAN:" or "CDO-LNO:")
+                # This pattern matches: [A-Z]+-[A-Z]+ or any route format followed by colon
+                # First, try to match any route from database that appears with a colon
+                for route in valid_routes_upload:
+                    # Escape special regex characters in route name
+                    route_escaped = re.escape(route)
+                    pattern = rf'{route_escaped}\s*:'
+                    match = re.search(pattern, remarks_str, re.IGNORECASE)
+                    if match:
+                        validated = is_valid_route(route)
+                        if validated:
+                            return validated
                 
-                # Pattern 2: Look for routes in specific contexts (after driver name)
-                # E.g., "Roque Oling: PAG-ILIGAN:" or after plate number
-                context_pattern = r':\s*(PAG-[A-Z]+|DIMATALING|DUMINGAG)[\s:]'
-                match = re.search(context_pattern, remarks_str, re.IGNORECASE)
-                if match:
+                # Pattern 2: Look for routes in specific contexts (after driver name or plate number)
+                # E.g., "Juan Dela Cruz: CDO-LNO:" or "LAH-2577: CDO-LNO:"
+                # Match pattern: ": [ROUTE]:" where ROUTE can be various formats
+                context_pattern = r':\s*([A-Z0-9]+(?:-[A-Z0-9]+)+|[A-Z\s]+?)\s*:'
+                matches = re.finditer(context_pattern, remarks_str, re.IGNORECASE)
+                for match in matches:
                     potential_route = match.group(1).strip()
-                    for route in routes:
-                        if route.upper() == potential_route.upper():
-                            return route
+                    # Skip if it looks like a driver name (has lowercase letters in middle)
+                    if re.search(r'[a-z]', potential_route) and len(potential_route.split()) > 1:
+                        continue
+                    validated = is_valid_route(potential_route)
+                    if validated:
+                        return validated
                 
                 # Pattern 3: Check for routes anywhere in the text (case-insensitive)
-                for route in routes:
-                    if route.upper() in remarks_str.upper():
-                        return route
+                # This is a fallback - check if any route name appears in the text
+                for route in valid_routes_upload:
+                    route_escaped = re.escape(route)
+                    # Match route as whole word or with word boundaries
+                    pattern = rf'\b{route_escaped}\b'
+                    if re.search(pattern, remarks_str, re.IGNORECASE):
+                        validated = is_valid_route(route)
+                        if validated:
+                            return validated
                 
                 return None
 
