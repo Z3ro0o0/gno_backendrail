@@ -191,6 +191,7 @@ SERVER_EMAIL = 'wrk.mrln@gmail.com'
 
 # CORS Settings
 CORS_ALLOWED_ORIGINS = [
+    "https://web-production-639bc.up.railway.app",
     "https://gno-frontend.onrender.com",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -201,6 +202,7 @@ CORS_ALLOW_ALL_ORIGINS = DEBUG  # Allow all origins in development
 
 # For file uploads
 CSRF_TRUSTED_ORIGINS = [
+    "https://web-production-639bc.up.railway.app",
     "https://gno-frontend.onrender.com",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
