@@ -176,18 +176,17 @@ DOMAIN = ('ong-trucking-frontend-production.up.railway.app')
 
 
 # Email configuration
-# Default: use console backend during development. Uncomment and configure SMTP when ready.
-# EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
-
-# Example configuration for SMTP (Mailtrap, Gmail, etc.). Set via environment variables in production.
-EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_HOST_USER = 'wrk.mrln@gmail.com'
-EMAIL_HOST_PASSWORD = 'tobjdwufshvkcxqe'
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-EMAIL_USE_SSL = False
-DEFAULT_FROM_EMAIL = 'no-reply@ongtrucking.com'
-SERVER_EMAIL = 'wrk.mrln@gmail.com'
+EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
+EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
+EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'true').lower() == 'true'
+EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'false').lower() == 'true'
+EMAIL_TIMEOUT = int(os.environ.get('EMAIL_TIMEOUT', 15))
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'no-reply123123@ongtrucking.com')
+SERVER_EMAIL = os.environ.get('SERVER_EMAIL', EMAIL_HOST_USER or DEFAULT_FROM_EMAIL)
+SUPPORT_EMAIL = os.environ.get('SUPPORT_EMAIL', DEFAULT_FROM_EMAIL)
 
 # CORS Settings
 CORS_ALLOWED_ORIGINS = [
