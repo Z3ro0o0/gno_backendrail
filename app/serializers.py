@@ -1,8 +1,140 @@
 from rest_framework import serializers
+from django.contrib.auth import get_user_model
+from django.utils import timezone
+from rest_framework.authtoken.models import Token
+import random
+from datetime import timedelta
+
 from .models import (
+    Role,
+    OTPCode,
     Driver, RepairAndMaintenanceAccount, InsuranceAccount, FuelAccount, Route, TaxAccount, 
     AllowanceAccount, IncomeAccount, Truck, TruckingAccount, SalaryAccount, TruckType, AccountType, PlateNumber, LoadType
 )
+
+User = get_user_model()
+
+
+class RoleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Role
+        fields = ['id', 'name', 'description']
+        read_only_fields = ['id']
+
+
+class CustomUserSerializer(serializers.ModelSerializer):
+    role = RoleSerializer(read_only=True)
+    role_id = serializers.PrimaryKeyRelatedField(
+        queryset=Role.objects.all(), source='role', write_only=True, required=False, allow_null=True
+    )
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'role', 'role_id', 'is_active']
+        read_only_fields = ['id', 'is_active']
+
+    def update(self, instance, validated_data):
+        role = validated_data.pop('role', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if role is not None:
+            instance.role = role
+        instance.save()
+        return instance
+
+
+class CustomUserCreateSerializer(serializers.ModelSerializer):
+    role_id = serializers.PrimaryKeyRelatedField(
+        queryset=Role.objects.all(), source='role', required=False, allow_null=True
+    )
+    password = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'password', 'role_id']
+        read_only_fields = ['id']
+
+    def create(self, validated_data):
+        role = validated_data.pop('role', None)
+        password = validated_data.pop('password')
+        user = User(**validated_data)
+        user.set_password(password)
+        user.is_active = False
+        if role:
+            user.role = role
+        user.save()
+        return user
+
+
+class OTPRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        email = attrs.get('email')
+        password = attrs.get('password')
+        user_model = get_user_model()
+        try:
+            user = user_model.objects.get(email__iexact=email)
+        except user_model.DoesNotExist:
+            raise serializers.ValidationError({'email': 'No account is associated with this email.'})
+        if not user.is_active:
+            raise serializers.ValidationError({'email': 'This account is not yet activated.'})
+        if not user.check_password(password):
+            raise serializers.ValidationError({'password': 'Incorrect password.'})
+        self.context['user'] = user
+        return attrs
+
+    def save(self, **kwargs):
+        user = self.context['user']
+        code = f"{random.randint(0, 999999):06d}"
+        expires_at = timezone.now() + timedelta(minutes=3)
+        otp = OTPCode.objects.create(user=user, code=code, expires_at=expires_at)
+
+        from .emails import OTPEmail
+
+        OTPEmail(otp).send()
+        return otp
+
+
+class OTPVerifySerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    code = serializers.CharField(max_length=6)
+
+    def validate(self, attrs):
+        email = attrs.get('email')
+        code = attrs.get('code')
+        user_model = get_user_model()
+        try:
+            user = user_model.objects.get(email__iexact=email)
+        except user_model.DoesNotExist:
+            raise serializers.ValidationError({'email': 'Invalid email or code.'})
+
+        otp = (
+            OTPCode.objects.filter(user=user, code=code, is_used=False)
+            .order_by('-created_at')
+            .first()
+        )
+
+        if otp is None:
+            raise serializers.ValidationError({'code': 'Invalid or expired code.'})
+        if otp.has_expired():
+            otp.is_used = True
+            otp.save(update_fields=['is_used'])
+            raise serializers.ValidationError({'code': 'This code has expired. Request a new one.'})
+
+        attrs['user'] = user
+        attrs['otp'] = otp
+        return attrs
+
+    def create(self, validated_data):
+        user = validated_data['user']
+        otp = validated_data['otp']
+        otp.is_used = True
+        otp.save(update_fields=['is_used'])
+
+        token, _ = Token.objects.get_or_create(user=user)
+        return token
 
 class TruckTypeSerializer(serializers.ModelSerializer):
     class Meta:
@@ -124,6 +256,7 @@ class TruckingAccountSerializer(serializers.ModelSerializer):
     front_load_id = serializers.PrimaryKeyRelatedField(queryset=LoadType.objects.all(), source='front_load', write_only=True, required=False)
     back_load = LoadTypeSerializer(read_only=True)
     back_load_id = serializers.PrimaryKeyRelatedField(queryset=LoadType.objects.all(), source='back_load', write_only=True, required=False)
+    locked_at = serializers.DateTimeField(read_only=True)
     
     driver_id = serializers.PrimaryKeyRelatedField(queryset=Driver.objects.all(), source='driver', write_only=True, required=False)
     route_id = serializers.PrimaryKeyRelatedField(queryset=Route.objects.all(), source='route', write_only=True, required=False)
@@ -155,8 +288,15 @@ class TruckingAccountSerializer(serializers.ModelSerializer):
             'front_load_id',
             'back_load',
             'back_load_id',
+            'is_locked',
+            'locked_at',
         ]
-        read_only_fields = ['id']
+        read_only_fields = ['id', 'is_locked', 'locked_at']
+
+    def update(self, instance, validated_data):
+        if instance.is_locked:
+            raise serializers.ValidationError('Locked trucking accounts cannot be modified.')
+        return super().update(instance, validated_data)
 
 
 class SalaryAccountSerializer(serializers.ModelSerializer):

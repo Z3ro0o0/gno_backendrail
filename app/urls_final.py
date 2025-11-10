@@ -24,8 +24,6 @@ from .views import (
     IncomeAccountListView,
     IncomeAccountDetailView,
     IncomeAccountUploadView,
-    TruckingAccountListView,
-    TruckingAccountDetailView,
     TruckingAccountUploadView,
     DriversSummaryView,
 )
@@ -33,6 +31,7 @@ from .revenue_views import RevenueStreamsView
 from .accounts_views import AccountsSummaryView
 from .accounts_detail_views import AccountsDetailView
 from .trips_views import TripsView
+from .trucking_account_views import TruckingAccountListView, TruckingAccountDetailView
 
 urlpatterns = [
     # TruckType URLs

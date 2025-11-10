@@ -75,6 +75,7 @@ class AllowanceTransferView(APIView):
             
             # Filter by plate number in Python since we need to standardize
             matching_records = []
+            locked_records = []
             for record in source_records:
                 record_plate = None
                 if record.truck and record.truck.plate_number:
@@ -84,9 +85,24 @@ class AllowanceTransferView(APIView):
                     # If entry_ids provided, only include those IDs
                     if entry_ids:
                         if record.id in entry_ids:
-                            matching_records.append(record)
+                            if record.is_locked:
+                                locked_records.append(record.id)
+                            else:
+                                matching_records.append(record)
                     else:
-                        matching_records.append(record)
+                        if record.is_locked:
+                            locked_records.append(record.id)
+                        else:
+                            matching_records.append(record)
+            
+            if locked_records:
+                return Response(
+                    {
+                        'error': 'Some allowance entries are locked and cannot be transferred.',
+                        'locked_account_ids': locked_records,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
             if not matching_records:
                 return Response(

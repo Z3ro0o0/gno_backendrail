@@ -306,13 +306,26 @@ class UpdateTripFieldView(APIView):
             
             # Filter by plate number
             accounts_to_update = []
+            locked_accounts = []
             for account in matching_accounts:
                 account_plate = None
                 if account.truck and account.truck.plate_number:
                     account_plate = account.truck.plate_number
                 
                 if account_plate and standardize_plate(account_plate) == standardized_plate:
-                    accounts_to_update.append(account)
+                    if account.is_locked:
+                        locked_accounts.append(account.id)
+                    else:
+                        accounts_to_update.append(account)
+            
+            if locked_accounts:
+                return Response(
+                    {
+                        'error': 'Some trucking accounts for the selected trip are locked and cannot be modified.',
+                        'locked_account_ids': locked_accounts,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
             if not accounts_to_update:
                 return Response(

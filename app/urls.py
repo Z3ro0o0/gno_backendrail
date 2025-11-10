@@ -1,5 +1,11 @@
 from django.urls import path
 from .views import (
+    RoleListView,
+    RoleDetailView,
+    OTPRequestView,
+    OTPVerifyView,
+    UserListView,
+    UserDetailView,
     DriverDetailView,
     DriverListView,
     RouteDetailView,
@@ -32,8 +38,6 @@ from .views import (
     IncomeAccountListView,
     IncomeAccountDetailView,
     IncomeAccountUploadView,
-    TruckingAccountListView,
-    TruckingAccountDetailView,
     TruckingAccountUploadView,
 )
 from .drivers_summary_view import DriversSummaryView
@@ -45,8 +49,22 @@ from .accounts_detail_views import AccountsDetailView
 from .trips_views import TripsView, UpdateTripFieldView
 from .allowance_transfer_view import AllowanceTransferView
 from .clear_trucking_view import ClearTruckingDataView
+from .lock_trucking_view import LockTruckingAccountsView
+from .trucking_account_views import TruckingAccountListView, TruckingAccountDetailView
 
 urlpatterns = [
+    # OTP Authentication
+    path('auth/otp/request/', OTPRequestView.as_view(), name='otp-request'),
+    path('auth/otp/verify/', OTPVerifyView.as_view(), name='otp-verify'),
+
+    # Role URLs
+    path('roles/', RoleListView.as_view(), name='role-list'),
+    path('roles/<int:pk>/', RoleDetailView.as_view(), name='role-detail'),
+
+    # User URLs
+    path('users/', UserListView.as_view(), name='user-list'),
+    path('users/<int:pk>/', UserDetailView.as_view(), name='user-detail'),
+
     # TruckType URLs
     path('truck-types/', TruckTypeListView.as_view(), name='truck-type-list'),
     path('truck-types/<int:pk>/', TruckTypeDetailView.as_view(), name='truck-type-detail'),
@@ -99,6 +117,7 @@ urlpatterns = [
     path('trucking/upload/', TruckingAccountUploadView.as_view(), name='trucking-upload'),
     path('trucking/preview/', TruckingAccountPreviewView.as_view(), name='trucking-preview'),
     path('trucking/clear/', ClearTruckingDataView.as_view(), name='trucking-clear'),
+    path('trucking/lock/', LockTruckingAccountsView.as_view(), name='trucking-lock'),
     
     
     path('drivers/summary/', DriversSummaryView.as_view(), name='drivers-summary'),

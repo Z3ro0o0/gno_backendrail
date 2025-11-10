@@ -1,0 +1,354 @@
+{
+  "app_accounttype": [],
+  "app_trucktype": [
+    {
+      "id": 1,
+      "name": "Tractor"
+    },
+    {
+      "id": 2,
+      "name": "10-wheeler"
+    },
+    {
+      "id": 3,
+      "name": "Forward"
+    },
+    {
+      "id": 4,
+      "name": "Trailer"
+    },
+    {
+      "id": 5,
+      "name": "L300"
+    },
+    {
+      "id": 6,
+      "name": "Elf"
+    },
+    {
+      "id": 7,
+      "name": "Canter"
+    }
+  ],
+  "app_truck": [
+    {
+      "id": 1,
+      "plate_number": "NGS-4340",
+      "truck_type_id": 1,
+      "company": "MGGC"
+    },
+    {
+      "id": 2,
+      "plate_number": "NFZ-4289",
+      "truck_type_id": 1,
+      "company": "MGGC"
+    },
+    {
+      "id": 3,
+      "plate_number": "NKJ-8148",
+      "truck_type_id": 1,
+      "company": "GCM"
+    },
+    {
+      "id": 4,
+      "plate_number": "NKS-4906",
+      "truck_type_id": 1,
+      "company": "GCM"
+    },
+    {
+      "id": 5,
+      "plate_number": "NGS-4359",
+      "truck_type_id": 1,
+      "company": "MGGC"
+    },
+    {
+      "id": 6,
+      "plate_number": "KGJ-765",
+      "truck_type_id": 1,
+      "company": "MGGC"
+    },
+    {
+      "id": 7,
+      "plate_number": "LAH-2577",
+      "truck_type_id": 1,
+      "company": "MGGC"
+    },
+    {
+      "id": 8,
+      "plate_number": "NGR-4104",
+      "truck_type_id": 2,
+      "company": "GCM"
+    },
+    {
+      "id": 9,
+      "plate_number": "CAS-1986",
+      "truck_type_id": 2,
+      "company": "GCM"
+    },
+    {
+      "id": 10,
+      "plate_number": "CBB-4521",
+      "truck_type_id": 2,
+      "company": "GCM"
+    },
+    {
+      "id": 11,
+      "plate_number": "CBJ-9367",
+      "truck_type_id": 2,
+      "company": "GCM"
+    },
+    {
+      "id": 12,
+      "plate_number": "CBS-7506",
+      "truck_type_id": 2,
+      "company": "GCM"
+    },
+    {
+      "id": 13,
+      "plate_number": "RKK-972",
+      "truck_type_id": 3,
+      "company": "MGGC"
+    },
+    {
+      "id": 14,
+      "plate_number": "RLC-147",
+      "truck_type_id": 3,
+      "company": "MGGC"
+    },
+    {
+      "id": 15,
+      "plate_number": "RND-920",
+      "truck_type_id": 3,
+      "company": "MGGC"
+    },
+    {
+      "id": 16,
+      "plate_number": "1101-939583",
+      "truck_type_id": null,
+      "company": ""
+    },
+    {
+      "id": 17,
+      "plate_number": "CUW 375",
+      "truck_type_id": 4,
+      "company": "MGGC"
+    },
+    {
+      "id": 18,
+      "plate_number": "CUW 455",
+      "truck_type_id": 4,
+      "company": "MGGC"
+    },
+    {
+      "id": 19,
+      "plate_number": "CUW-703",
+      "truck_type_id": 4,
+      "company": "MGGC"
+    },
+    {
+      "id": 20,
+      "plate_number": "CUX 855",
+      "truck_type_id": 4,
+      "company": "MGGC"
+    },
+    {
+      "id": 21,
+      "plate_number": "CUX 875",
+      "truck_type_id": 4,
+      "company": "MGGC"
+    },
+    {
+      "id": 22,
+      "plate_number": "HUA-606",
+      "truck_type_id": 4,
+      "company": "MGGC"
+    },
+    {
+      "id": 23,
+      "plate_number": "MVG 515",
+      "truck_type_id": 4,
+      "company": "MGGC"
+    },
+    {
+      "id": 24,
+      "plate_number": "TEMP 151005",
+      "truck_type_id": 4,
+      "company": "MGGC"
+    },
+    {
+      "id": 25,
+      "plate_number": "EBS 206",
+      "truck_type_id": 5,
+      "company": "LTH"
+    },
+    {
+      "id": 26,
+      "plate_number": "XKR 745",
+      "truck_type_id": 5,
+      "company": "LTH"
+    },
+    {
+      "id": 27,
+      "plate_number": "GAP 4244",
+      "truck_type_id": 6,
+      "company": "LTH"
+    },
+    {
+      "id": 28,
+      "plate_number": "GAP 7747",
+      "truck_type_id": 6,
+      "company": "LTH"
+    },
+    {
+      "id": 29,
+      "plate_number": "MCZ 143",
+      "truck_type_id": 3,
+      "company": "MGGC"
+    },
+    {
+      "id": 30,
+      "plate_number": "CCN5596",
+      "truck_type_id": 7,
+      "company": "MGGC"
+    },
+    {
+      "id": 31,
+      "plate_number": "TLQ 414",
+      "truck_type_id": 7,
+      "company": "MGGC"
+    },
+    {
+      "id": 32,
+      "plate_number": "PGQ 851",
+      "truck_type_id": 5,
+      "company": "MGGC"
+    },
+    {
+      "id": 33,
+      "plate_number": "ACU3850",
+      "truck_type_id": 1,
+      "company": "MGGC"
+    },
+    {
+      "id": 34,
+      "plate_number": "CAO1494",
+      "truck_type_id": 4,
+      "company": "MGGC"
+    },
+    {
+      "id": 35,
+      "plate_number": "JAO9061",
+      "truck_type_id": 6,
+      "company": "LTH"
+    }
+  ],
+  "app_driver": [
+    {
+      "id": 1,
+      "name": "Roque Oling"
+    },
+    {
+      "id": 2,
+      "name": "Jun2x Toledo"
+    },
+    {
+      "id": 3,
+      "name": "Joseph Bahan"
+    },
+    {
+      "id": 4,
+      "name": "Romel Bantilan"
+    },
+    {
+      "id": 5,
+      "name": "Doming"
+    },
+    {
+      "id": 6,
+      "name": "Ronie Babanto"
+    },
+    {
+      "id": 7,
+      "name": "Jun2x Campa\u00f1a"
+    },
+    {
+      "id": 8,
+      "name": "Raque Oling"
+    },
+    {
+      "id": 9,
+      "name": "Reynaldo Rizalda"
+    },
+    {
+      "id": 10,
+      "name": "Francis Ariglado"
+    },
+    {
+      "id": 11,
+      "name": "Pablo Hamo"
+    },
+    {
+      "id": 12,
+      "name": "Edgardo Agapay"
+    },
+    {
+      "id": 13,
+      "name": "Arnel Duhilag"
+    },
+    {
+      "id": 14,
+      "name": "Jonathan Balumaga"
+    },
+    {
+      "id": 15,
+      "name": "Albert Saavedra"
+    },
+    {
+      "id": 16,
+      "name": "Benjamin Aloso"
+    },
+    {
+      "id": 17,
+      "name": "Jimmy Oclarit"
+    },
+    {
+      "id": 18,
+      "name": "Try Driver"
+    }
+  ],
+  "app_route": [
+    {
+      "id": 1,
+      "name": "PAG-ILIGAN"
+    },
+    {
+      "id": 2,
+      "name": "PAG-BUUG"
+    },
+    {
+      "id": 3,
+      "name": "PAG-CDO"
+    },
+    {
+      "id": 4,
+      "name": "PAG-DIMATALING"
+    },
+    {
+      "id": 5,
+      "name": "PAG-BAYOG"
+    },
+    {
+      "id": 6,
+      "name": "PAGADIAN"
+    },
+    {
+      "id": 7,
+      "name": "PAG-COTABATO"
+    },
+    {
+      "id": 8,
+      "name": "PAG-DIPLAHAN"
+    }
+  ],
+  "app_platenumber": []
+}

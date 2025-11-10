@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 import os
+from django.conf import settings as django_settings
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -41,7 +42,9 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
     "rest_framework",
+    'rest_framework.authtoken',
     "corsheaders",
+    'djoser',
     "ong_backend",
     'app'
 ]
@@ -70,6 +73,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'django.template.context_processors.static',
             ],
         },
     },
@@ -146,6 +150,44 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.AllowAny',
     )
 }
+
+AUTH_USER_MODEL = 'app.User'
+
+DJOSER = {
+    'SERIALIZERS': {
+        'user': 'app.serializers.CustomUserSerializer',
+        'current_user': 'app.serializers.CustomUserSerializer',
+        'user_create': 'app.serializers.CustomUserCreateSerializer',
+    },
+    'LOGIN_FIELD': 'username',
+    'SEND_ACTIVATION_EMAIL': True,
+    'ACTIVATION_URL': 'auth/activate/{uid}/{token}',
+    'DOMAIN': os.environ.get('FRONTEND_DOMAIN', 'ong-trucking-frontend-production.up.railway.app'),
+    'SITE_NAME': os.environ.get('SITE_NAME', 'Ong Trucking'),
+    'PROTOCOL': os.environ.get('FRONTEND_PROTOCOL', 'https'),
+    'EMAIL': {
+        'activation': 'app.emails.CustomActivationEmail',
+    },
+}
+
+# DOMAIN = ('unieventify-7t3vl.ondigitalocean.app')
+DOMAIN = ('ong-trucking-frontend-production.up.railway.app')
+
+
+
+# Email configuration
+# Default: use console backend during development. Uncomment and configure SMTP when ready.
+# EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+
+# Example configuration for SMTP (Mailtrap, Gmail, etc.). Set via environment variables in production.
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_HOST_USER = 'wrk.mrln@gmail.com'
+EMAIL_HOST_PASSWORD = 'tobjdwufshvkcxqe'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_USE_SSL = False
+DEFAULT_FROM_EMAIL = 'no-reply@ongtrucking.com'
+SERVER_EMAIL = 'wrk.mrln@gmail.com'
 
 # CORS Settings
 CORS_ALLOWED_ORIGINS = [
