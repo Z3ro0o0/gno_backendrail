@@ -216,6 +216,7 @@ class TruckingAccount(models.Model):
     route = models.ForeignKey(Route, on_delete=models.SET_NULL, null=True, blank=True)
     front_load = models.ForeignKey(LoadType, on_delete=models.SET_NULL, null=True, blank=True,related_name='front_trucking_accounts')
     back_load = models.ForeignKey(LoadType, on_delete=models.SET_NULL, null=True, blank=True, related_name='back_trucking_accounts')
+    created_at = models.DateTimeField(auto_now_add=True)
     is_locked = models.BooleanField(default=False)
     locked_at = models.DateTimeField(null=True, blank=True)
 

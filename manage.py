@@ -3,12 +3,16 @@
 import os
 import sys
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional dependency
+    load_dotenv = None
 
 
 def main():
     """Run administrative tasks."""
-    load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
+    if load_dotenv is not None:
+        load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'ong_backend.settings')
     try:
         from django.core.management import execute_from_command_line

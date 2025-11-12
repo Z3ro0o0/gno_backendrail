@@ -257,6 +257,7 @@ class TruckingAccountSerializer(serializers.ModelSerializer):
     back_load = LoadTypeSerializer(read_only=True)
     back_load_id = serializers.PrimaryKeyRelatedField(queryset=LoadType.objects.all(), source='back_load', write_only=True, required=False)
     locked_at = serializers.DateTimeField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
     
     driver_id = serializers.PrimaryKeyRelatedField(queryset=Driver.objects.all(), source='driver', write_only=True, required=False)
     route_id = serializers.PrimaryKeyRelatedField(queryset=Route.objects.all(), source='route', write_only=True, required=False)
@@ -290,8 +291,9 @@ class TruckingAccountSerializer(serializers.ModelSerializer):
             'back_load_id',
             'is_locked',
             'locked_at',
+            'created_at',
         ]
-        read_only_fields = ['id', 'is_locked', 'locked_at']
+        read_only_fields = ['id', 'is_locked', 'locked_at', 'created_at']
 
     def update(self, instance, validated_data):
         if instance.is_locked:

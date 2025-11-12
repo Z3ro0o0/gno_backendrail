@@ -2,9 +2,11 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from django.utils import timezone
 from .models import TruckingAccount, Driver, Route, Truck, TruckType, AccountType, LoadType
 import pandas as pd
 import re
+from datetime import datetime, date
 
 # Helper functions for load validation and cleaning
 # Update the INVALID_LOADS set to be more comprehensive
@@ -1916,6 +1918,24 @@ class TruckingAccountUploadView(APIView):
                 'routes_extracted': 0,
                 'loads_extracted': 0
             }
+            duplicate_count = 0
+            batch_created_at = timezone.now()
+            existing_account_map = {}
+
+            existing_accounts = TruckingAccount.objects.all().values(
+                'account_number',
+                'account_type_id',
+                'date',
+                'created_at',
+            )
+            for record in existing_accounts:
+                key = (
+                    record['account_number'],
+                    record['account_type_id'],
+                    record['date'],
+                )
+                if key not in existing_account_map:
+                    existing_account_map[key] = record['created_at']
             
             for index, row in df.iterrows():
                 try:
@@ -1943,6 +1963,48 @@ class TruckingAccountUploadView(APIView):
                         route_name_raw = str(row.get('route')).strip()
                         existing_route = Route.objects.filter(name__iexact=route_name_raw).first()
                         route_instance = existing_route or Route.objects.create(name=route_name_raw)
+
+                    # Resolve AccountType by name (create if not exist)
+                    account_type_instance = None
+                    if row.get('account_type') and str(row.get('account_type')).strip() != '':
+                        account_type_name = str(row.get('account_type')).strip()
+                        account_type_instance, _ = AccountType.objects.get_or_create(name=account_type_name)
+
+                    # Normalize account number
+                    raw_account_number = row.get('account_number', '')
+                    if pd.isna(raw_account_number):
+                        account_number_value = ''
+                    else:
+                        account_number_value = str(raw_account_number).strip()
+
+                    # Normalize date value
+                    account_date_value = None
+                    raw_date_value = row.get('date')
+                    if pd.notna(raw_date_value) and raw_date_value != '':
+                        if isinstance(raw_date_value, pd.Timestamp):
+                            account_date_value = raw_date_value.date()
+                        elif isinstance(raw_date_value, datetime):
+                            account_date_value = raw_date_value.date()
+                        elif isinstance(raw_date_value, date):
+                            account_date_value = raw_date_value
+                        else:
+                            try:
+                                account_date_value = pd.to_datetime(raw_date_value).date()
+                            except Exception:
+                                account_date_value = None
+
+                    dedup_key = (
+                        account_number_value,
+                        account_type_instance.id if account_type_instance else None,
+                        account_date_value,
+                    )
+
+                    if dedup_key in existing_account_map:
+                        duplicate_count += 1
+                        errors.append(
+                            f"Row {index + 1}: Duplicate entry detected for account {account_number_value} (original created_at {existing_account_map[dedup_key]}). Skipped."
+                        )
+                        continue
 
                     # Resolve Truck by plate number, truck type, and company
                     truck_instance = None
@@ -1988,12 +2050,6 @@ class TruckingAccountUploadView(APIView):
                                 company=company_str if company_str else None
                             )
 
-                    # Resolve AccountType by name (create if not exist)
-                    account_type_instance = None
-                    if row.get('account_type') and str(row.get('account_type')).strip() != '':
-                        account_type_name = str(row.get('account_type')).strip()
-                        account_type_instance, _ = AccountType.objects.get_or_create(name=account_type_name)
-
                     # Resolve LoadType for front_load by name (only use existing loads from database, don't create new ones)
                     front_load_instance = None
                     if row.get('front_load') and str(row.get('front_load')).strip() != '':
@@ -2016,7 +2072,7 @@ class TruckingAccountUploadView(APIView):
 
                     # Create TruckingAccount instance
                     account = TruckingAccount(
-                        account_number=row.get('account_number', ''),
+                        account_number=account_number_value,
                         account_type=account_type_instance,
                         truck=truck_instance,
                         description=row.get('description', ''),
@@ -2025,7 +2081,7 @@ class TruckingAccountUploadView(APIView):
                         final_total=row.get('final_total', 0),
                         remarks=row.get('remarks', ''),
                         reference_number=row.get('reference_number', '') if row.get('reference_number') != '' else None,
-                        date=row.get('date') if not pd.isna(row.get('date')) else None,
+                        date=account_date_value,
                         quantity=row.get('quantity') if not pd.isna(row.get('quantity')) and row.get('quantity') != 0 else None,
                         price=row.get('price') if not pd.isna(row.get('price')) and row.get('price') != 0 else None,
                         driver=driver_instance,
@@ -2033,6 +2089,8 @@ class TruckingAccountUploadView(APIView):
                         front_load=front_load_instance,
                         back_load=back_load_instance,
                     )
+
+                    account.created_at = batch_created_at
                     
                     account.save()
                     created_count += 1
@@ -2044,6 +2102,7 @@ class TruckingAccountUploadView(APIView):
             return Response({
                 'message': f'Successfully created {created_count} trucking accounts',
                 'created_count': created_count,
+                'duplicates_skipped': duplicate_count,
                 'parsing_stats': parsing_stats,
                 'errors': errors[:10] if errors else []  # Show first 10 errors
             }, status=status.HTTP_201_CREATED)
