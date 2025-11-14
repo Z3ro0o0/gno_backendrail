@@ -110,6 +110,12 @@ class OTPVerifySerializer(serializers.Serializer):
         except user_model.DoesNotExist:
             raise serializers.ValidationError({'email': 'Invalid email or code.'})
 
+        # Bypass OTP validation when code is '000000' (for when OTP email sending is commented out)
+        if code == '000000':
+            attrs['user'] = user
+            attrs['otp'] = None
+            return attrs
+
         otp = (
             OTPCode.objects.filter(user=user, code=code, is_used=False)
             .order_by('-created_at')
@@ -129,9 +135,10 @@ class OTPVerifySerializer(serializers.Serializer):
 
     def create(self, validated_data):
         user = validated_data['user']
-        otp = validated_data['otp']
-        otp.is_used = True
-        otp.save(update_fields=['is_used'])
+        otp = validated_data.get('otp')
+        if otp:
+            otp.is_used = True
+            otp.save(update_fields=['is_used'])
 
         token, _ = Token.objects.get_or_create(user=user)
         return token
