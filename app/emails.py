@@ -12,8 +12,15 @@ import resend
 from .models import OTPCode
 
 # Initialize Resend API key
-resend.api_key = os.environ.get('RESEND_API_KEY', 're_3HrFPxTW_3PZssqZHbW3wNViQmwuiZund')
-RESEND_FROM_EMAIL = os.environ.get('RESEND_FROM_EMAIL', 'Acme <no-reply@gnikcurt.dpdns.org>')
+resend.api_key = os.environ.get('RESEND_API_KEY', 're_EEXw54RC_KwBw1XsD95UX35TzCZNU2jXB')
+# Use Resend's default domain for testing, or set RESEND_FROM_EMAIL env var with a verified domain
+# For production, you MUST verify your domain in Resend and use that domain
+# IMPORTANT: Using "onboarding" instead of "no-reply" for better deliverability
+RESEND_FROM_EMAIL = os.environ.get('RESEND_FROM_EMAIL', 'Ong Trucking <onboarding@trucking.jeronpos.com>')
+
+# Debug: Print the email being used (remove in production)
+if os.environ.get('DEBUG_EMAIL', 'False').lower() == 'true':
+    print(f"[DEBUG] Using RESEND_FROM_EMAIL: {RESEND_FROM_EMAIL}")
 
 
 class CustomActivationEmail(email.ActivationEmail):
@@ -46,6 +53,7 @@ class CustomActivationEmail(email.ActivationEmail):
         """Override send method to use Resend instead of Django email backend"""
         context = self.get_context_data()
         html_body = render_to_string(self.template_name, context)
+        text_body = strip_tags(html_body)
         subject = render_to_string('emails/activation_subject.txt', context).strip()
         
         # Get recipient email - use 'to' parameter if provided, otherwise get from user context
@@ -57,11 +65,27 @@ class CustomActivationEmail(email.ActivationEmail):
                 raise ValueError("No recipient email address found in user context")
             to_email = user.email
         
+        # Get support email for reply-to
+        support_email = context.get('support_email', 'support@ongtrucking.com')
+        
+        # Clean up text body - remove extra whitespace and format better
+        text_body_clean = '\n'.join(line.strip() for line in text_body.split('\n') if line.strip())
+        
+        # Extract domain from RESEND_FROM_EMAIL for consistency
+        from_domain = RESEND_FROM_EMAIL.split('@')[1].split('>')[0] if '@' in RESEND_FROM_EMAIL else 'jeronpos.com'
+        
         params = {
             "from": RESEND_FROM_EMAIL,
-            "to": [to_email] if not isinstance(to_email, list) else to_email,  # Email from user input in frontend
+            "to": [to_email] if not isinstance(to_email, list) else to_email,
             "subject": subject,
             "html": html_body,
+            "text": text_body_clean,  # Clean plain text version
+            "reply_to": support_email,  # Add reply-to header
+            "headers": {
+                "X-Entity-Ref-ID": f"activation-{context.get('user', {}).id if context.get('user') else 'unknown'}",
+                "List-Unsubscribe": f"<mailto:{support_email}?subject=unsubscribe>",
+                "X-Mailer": "Ong Trucking Platform",
+            },
         }
         
         try:
@@ -96,11 +120,18 @@ class OTPEmail:
         subject = render_to_string(self.subject_template_name, context).strip()
 
         # Use Resend to send email
+        support_email = context.get('support_email', 'support@ongtrucking.com')
+        
         params = {
             "from": RESEND_FROM_EMAIL,
-            "to": [self.otp.user.email],  # Email from user input in frontend
+            "to": [self.otp.user.email],
             "subject": subject,
             "html": html_body,
+            "text": text_body,  # Add plain text version
+            "reply_to": support_email,  # Add reply-to header
+            "headers": {
+                "X-Entity-Ref-ID": f"otp-{self.otp.user.id}",
+            },
         }
         
         try:

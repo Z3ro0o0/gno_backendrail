@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>{{ site_name }} – Activate your account</title>
+  <title>{{ site_name }} – Email Verification</title>
   <style>
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -69,30 +69,36 @@
   <div class="container">
     <div class="logo">{{ site_name }}</div>
     <div class="card">
-      <h1>Activate your account</h1>
+      <h1>Confirm your email address</h1>
       <p>Hello {{ user.get_full_name|default:user.username }},</p>
       <p>
-        Thanks for joining <strong>{{ site_name }}</strong>. To keep your account secure we need to confirm your email address.
-        Just click the button below to activate your account.
+        Thank you for signing up! To get started with your <strong>{{ site_name }}</strong> account, please verify your email address by clicking the button below.
       </p>
       <p style="text-align:center;">
-        <a class="button" href="{{ protocol }}://{{ domain }}/{{ url }}">
-          Activate my account
+        <a class="button" href="{{ protocol }}://{{ domain }}/{{ url }}" style="color: #ffffff; text-decoration: none;">
+          Verify Email Address
         </a>
       </p>
       <p class="meta">
-        If the button above doesn’t work, copy and paste this link into your browser:
+        Having trouble with the button? Copy and paste this link into your web browser:
         <br /><br />
-        <span style="word-break: break-all;">{{ protocol }}://{{ domain }}/{{ url }}</span>
+        <span style="word-break: break-all; color: #3b82f6; font-size: 12px;">{{ protocol }}://{{ domain }}/{{ url }}</span>
       </p>
       <p class="meta">
-        This link will expire after a short period. If you didn’t request this email, no action is required.
+        This verification link is valid for 24 hours. If you did not create an account with us, you can safely disregard this message.
       </p>
-      <p>Welcome aboard,<br />The {{ site_name }} Team</p>
+      <p>
+        Best regards,<br />
+        The {{ site_name }} Team
+      </p>
     </div>
     <div class="footer">
-      Need help? Contact us at {{ support_email }}<br />
-      © {{ site_name }} {{ current_year }}. All rights reserved.
+      <p style="margin: 8px 0;">Questions? Reply to this email or contact us at {{ support_email }}</p>
+      <p style="margin: 8px 0;">© {{ current_year }} {{ site_name }}. All rights reserved.</p>
+      <p style="margin: 8px 0; font-size: 11px; color: #9ca3af;">
+        This email was sent to {{ user.email }} because you created an account with {{ site_name }}.
+        <br />If you did not create this account, you can safely ignore this email.
+      </p>
     </div>
   </div>
 </body>

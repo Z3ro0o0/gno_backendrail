@@ -162,7 +162,7 @@ DJOSER = {
     'LOGIN_FIELD': 'username',
     'SEND_ACTIVATION_EMAIL': True,
     'ACTIVATION_URL': 'auth/activate/{uid}/{token}',
-    'DOMAIN': os.environ.get('FRONTEND_DOMAIN', 'ong-trucking-frontend-production.up.railway.app'),
+    'DOMAIN': os.environ.get('FRONTEND_DOMAIN', 'tnorf.gnikcurt.dpdns.org'),
     'SITE_NAME': os.environ.get('SITE_NAME', 'Ong Trucking'),
     'PROTOCOL': os.environ.get('FRONTEND_PROTOCOL', 'https'),
     'EMAIL': {
@@ -171,7 +171,7 @@ DJOSER = {
 }
 
 # DOMAIN = ('unieventify-7t3vl.ondigitalocean.app')
-DOMAIN = ('ong-trucking-frontend-production.up.railway.app')
+DOMAIN = ('tnorf.gnikcurt.dpdns.org')
 
 
 
@@ -184,7 +184,7 @@ EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
 EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'true').lower() == 'true'
 EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'false').lower() == 'true'
 EMAIL_TIMEOUT = int(os.environ.get('EMAIL_TIMEOUT', 15))
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'no-reply123123@ongtrucking.com')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'onboarding@ongtrucking.com')
 SERVER_EMAIL = os.environ.get('SERVER_EMAIL', EMAIL_HOST_USER or DEFAULT_FROM_EMAIL)
 SUPPORT_EMAIL = os.environ.get('SUPPORT_EMAIL', DEFAULT_FROM_EMAIL)
 

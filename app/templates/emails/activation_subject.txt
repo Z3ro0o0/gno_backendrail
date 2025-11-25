@@ -1,1 +1,1 @@
-Activate your {{ site_name }} account
+Welcome to {{ site_name }} - Please confirm your email
