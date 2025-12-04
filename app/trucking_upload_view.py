@@ -145,6 +145,16 @@ class TruckingAccountPreviewView(APIView):
             # This must happen early to avoid processing these rows
             df = df[~df.astype(str).apply(lambda x: x.str.contains('Total for', case=False, na=False)).any(axis=1)]
             
+            # Remove completely empty rows before resetting index (to ensure indices match upload)
+            # This must be done before reset_index so that preview indices match upload indices
+            df = df[~df.isnull().all(axis=1)]
+            
+            # Reset index to ensure sequential indices (0, 1, 2, ...) that match preview indices
+            df = df.reset_index(drop=True)
+            
+            # Note: Empty rows are now already filtered, so the continue check in the loop below is redundant
+            # but kept for safety
+            
             # Function to parse Account column into components (PREVIEW VIEW)
             def parse_account_column(account_value):
                 """Parse Account column to extract Account_Number, Account_Type, Truck_type, Plate_number"""
@@ -1090,6 +1100,34 @@ class TruckingAccountUploadView(APIView):
             # Remove rows with 'Total for' in ANY column BEFORE parsing (UPLOAD VIEW)
             # This must happen early to avoid processing these rows
             df = df[~df.astype(str).apply(lambda x: x.str.contains('Total for', case=False, na=False)).any(axis=1)]
+            
+            # Remove completely empty rows before resetting index (to match preview behavior)
+            df = df[~df.isnull().all(axis=1)]
+            
+            # Reset index to ensure sequential indices (0, 1, 2, ...) that match preview indices
+            df = df.reset_index(drop=True)
+            
+            # Handle excluded preview indices (rows deleted in preview)
+            exclude_preview_indices = None
+            if 'exclude_preview_indices' in request.data:
+                try:
+                    import json
+                    exclude_preview_indices = json.loads(request.data['exclude_preview_indices'])
+                    if exclude_preview_indices:
+                        # Convert to set for faster lookup
+                        exclude_preview_indices = set(exclude_preview_indices)
+                        print(f"[DEBUG] Excluding {len(exclude_preview_indices)} rows at indices: {sorted(exclude_preview_indices)}")
+                        print(f"[DEBUG] DataFrame shape before exclusion: {df.shape}")
+                        # Filter dataframe to exclude rows at these indices (0-based indices in processed dataframe)
+                        # Now that index is reset, these indices match the preview indices
+                        df = df[~df.index.isin(exclude_preview_indices)]
+                        print(f"[DEBUG] DataFrame shape after exclusion: {df.shape}")
+                        # Reset index again after filtering to maintain sequential indices
+                        df = df.reset_index(drop=True)
+                except (json.JSONDecodeError, ValueError, TypeError) as e:
+                    # If parsing fails, continue without exclusion
+                    print(f"[DEBUG] Error parsing exclude_preview_indices: {e}")
+                    pass
             
             # Function to parse Account column into components
             def parse_account_column(account_value):

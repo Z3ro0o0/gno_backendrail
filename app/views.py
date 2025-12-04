@@ -84,6 +84,124 @@ class UserDetailView(RetrieveUpdateDestroyAPIView):
     serializer_class = CustomUserSerializer
 
 
+class CurrentUserView(APIView):
+    """
+    GET: Get current authenticated user
+    PUT/PATCH: Update current user profile
+    """
+    def get(self, request):
+        if not request.user.is_authenticated:
+            return Response(
+                {'error': 'Authentication required'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        serializer = CustomUserSerializer(request.user)
+        return Response(serializer.data)
+    
+    def put(self, request):
+        if not request.user.is_authenticated:
+            return Response(
+                {'error': 'Authentication required'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        # Remove email from update data (email should not be editable)
+        update_data = request.data.copy()
+        if 'email' in update_data:
+            del update_data['email']
+        serializer = CustomUserSerializer(request.user, data=update_data, partial=False)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def patch(self, request):
+        if not request.user.is_authenticated:
+            return Response(
+                {'error': 'Authentication required'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        # Remove email from update data (email should not be editable)
+        update_data = request.data.copy()
+        if 'email' in update_data:
+            del update_data['email']
+        serializer = CustomUserSerializer(request.user, data=update_data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ChangePasswordView(APIView):
+    """
+    POST: Change user password
+    Requires: old_password, new_password, confirm_password
+    """
+    def post(self, request):
+        if not request.user.is_authenticated:
+            return Response(
+                {'error': 'Authentication required'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        old_password = request.data.get('old_password')
+        new_password = request.data.get('new_password')
+        confirm_password = request.data.get('confirm_password')
+        
+        # Validate required fields
+        if not old_password:
+            return Response(
+                {'error': 'Old password is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if not new_password:
+            return Response(
+                {'error': 'New password is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if not confirm_password:
+            return Response(
+                {'error': 'Confirm password is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if old password is correct
+        if not request.user.check_password(old_password):
+            return Response(
+                {'error': 'Old password is incorrect'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if new password and confirm password match
+        if new_password != confirm_password:
+            return Response(
+                {'error': 'New password and confirm password do not match'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if new password is different from old password
+        if old_password == new_password:
+            return Response(
+                {'error': 'New password must be different from old password'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate password strength (optional - you can add more validation)
+        if len(new_password) < 8:
+            return Response(
+                {'error': 'New password must be at least 8 characters long'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Set new password
+        request.user.set_password(new_password)
+        request.user.save()
+        
+        return Response(
+            {'message': 'Password changed successfully'},
+            status=status.HTTP_200_OK
+        )
+
+
 class DriverListView(ListCreateAPIView):
     queryset = Driver.objects.all()
     serializer_class = DriverSerializer

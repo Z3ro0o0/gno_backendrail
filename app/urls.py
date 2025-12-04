@@ -6,6 +6,8 @@ from .views import (
     OTPVerifyView,
     UserListView,
     UserDetailView,
+    CurrentUserView,
+    ChangePasswordView,
     DriverDetailView,
     DriverListView,
     RouteDetailView,
@@ -64,6 +66,8 @@ urlpatterns = [
     # User URLs
     path('users/', UserListView.as_view(), name='user-list'),
     path('users/<int:pk>/', UserDetailView.as_view(), name='user-detail'),
+    path('users/me/', CurrentUserView.as_view(), name='current-user'),
+    path('users/me/change-password/', ChangePasswordView.as_view(), name='change-password'),
 
     # TruckType URLs
     path('truck-types/', TruckTypeListView.as_view(), name='truck-type-list'),
