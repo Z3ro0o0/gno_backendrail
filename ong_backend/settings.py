@@ -59,6 +59,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'app.middleware.CacheControlMiddleware',  # Add cache control headers
 ]
 
 ROOT_URLCONF = 'ong_backend.urls'
@@ -99,16 +100,16 @@ DATABASES = {
 
 # DATABASES = {
 #     'default': {
-#         'ENGINE': os.getenv("DB_ENGINE"),
-#         'NAME': os.getenv("DB_NAME"),
-#         'USER': os.getenv("DB_USER"),
-#         'PASSWORD': os.getenv("DB_PASSWORD"),
-#         'HOST': os.getenv("DB_HOST"),
-#         'PORT': os.getenv("DB_PORT"),
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': os.environ.get('DB_NAME'),
+#         'USER': os.environ.get('DB_USER'),
+#         'PASSWORD': os.environ.get('DB_PASSWORD'),
+#         'HOST': os.environ.get('DB_HOST'),
+#         'PORT': os.environ.get('DB_PORT', '5432'),  # default PostgreSQL port
 #         'OPTIONS': {
-#             'sslmode': os.getenv("DB_SSLMODE", "require"),
-#             'channel_binding': os.getenv("DB_CHANNEL_BINDING", "require"),
-#         }
+#             'sslmode': os.environ.get('DB_SSLMODE', 'require'),
+#             'channel_binding': os.environ.get('DB_CHANNEL_BINDING', 'require'),
+#         },
 #     }
 # }
 
@@ -215,6 +216,19 @@ CORS_ALLOWED_ORIGINS = [
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_ALL_ORIGINS = DEBUG  # Allow all origins in development
 
+# Explicitly allow common headers
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
 # For file uploads
 CSRF_TRUSTED_ORIGINS = [
     "https://web-production-639bc.up.railway.app",
@@ -222,3 +236,15 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
+
+# Cache configuration
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'unique-snowflake',
+        'TIMEOUT': 300,  # 5 minutes default
+        'OPTIONS': {
+            'MAX_ENTRIES': 1000,
+        }
+    }
+}

@@ -1948,6 +1948,30 @@ class TruckingAccountUploadView(APIView):
                 # Apply abs() to make positive if negative
                 df.loc[hauling_income_mask, 'final_total'] = df.loc[hauling_income_mask, 'final_total'].apply(lambda x: abs(x) if x < 0 else x)
             
+            # Helper functions to normalize data for duplicate checking
+            def normalize_account_number_for_dedup(account_num):
+                """Normalize account number for consistent duplicate detection"""
+                if not account_num:
+                    return ''
+                # Convert to string, remove whitespace, remove trailing .0
+                normalized = str(account_num).strip().replace('.0', '').replace('.00', '')
+                # Remove leading zeros (optional - comment out if account numbers should keep leading zeros)
+                # normalized = normalized.lstrip('0') or '0'  # Keep at least one digit
+                return normalized
+
+            def normalize_date_for_dedup(date_value):
+                """Normalize date to ensure consistent comparison"""
+                if date_value is None:
+                    return None
+                if isinstance(date_value, date):
+                    return date_value
+                if isinstance(date_value, datetime):
+                    return date_value.date()
+                try:
+                    return pd.to_datetime(date_value).date()
+                except:
+                    return None
+
             # Create accounts
             created_count = 0
             errors = []
@@ -1966,14 +1990,24 @@ class TruckingAccountUploadView(APIView):
                 'date',
                 'created_at',
             )
+            # Store existing entries with their created_at timestamps
+            # Key: (account_number, account_type_id, date)
+            # Value: list of created_at timestamps for all matching entries
             for record in existing_accounts:
+                # Normalize account number and date for consistent comparison
+                normalized_account = normalize_account_number_for_dedup(record['account_number'])
+                normalized_date = normalize_date_for_dedup(record['date'])
+                
                 key = (
-                    record['account_number'],
+                    normalized_account,
                     record['account_type_id'],
-                    record['date'],
+                    normalized_date,
                 )
                 if key not in existing_account_map:
-                    existing_account_map[key] = record['created_at']
+                    existing_account_map[key] = []
+                
+                # Store created_at timestamp
+                existing_account_map[key].append(record['created_at'])
             
             for index, row in df.iterrows():
                 try:
@@ -2008,28 +2042,27 @@ class TruckingAccountUploadView(APIView):
                         account_type_name = str(row.get('account_type')).strip()
                         account_type_instance, _ = AccountType.objects.get_or_create(name=account_type_name)
 
-                    # Normalize account number
+                    # Normalize account number (use same normalization as in existing_account_map)
                     raw_account_number = row.get('account_number', '')
                     if pd.isna(raw_account_number):
                         account_number_value = ''
                     else:
-                        account_number_value = str(raw_account_number).strip()
+                        account_number_value = normalize_account_number_for_dedup(raw_account_number)
 
-                    # Normalize date value
+                    # Normalize date value (use same normalization as in existing_account_map)
                     account_date_value = None
                     raw_date_value = row.get('date')
                     if pd.notna(raw_date_value) and raw_date_value != '':
-                        if isinstance(raw_date_value, pd.Timestamp):
-                            account_date_value = raw_date_value.date()
-                        elif isinstance(raw_date_value, datetime):
-                            account_date_value = raw_date_value.date()
-                        elif isinstance(raw_date_value, date):
-                            account_date_value = raw_date_value
-                        else:
-                            try:
-                                account_date_value = pd.to_datetime(raw_date_value).date()
-                            except Exception:
-                                account_date_value = None
+                        account_date_value = normalize_date_for_dedup(raw_date_value)
+                    
+                    # Skip if date is required but missing (to prevent None date duplicates)
+                    # Uncomment the following lines if you want to require dates for all entries
+                    # if account_date_value is None:
+                    #     errors.append(
+                    #         f"Row {index + 1}: Missing date for account {account_number_value}. Skipped."
+                    #     )
+                    #     error_count += 1
+                    #     continue
 
                     dedup_key = (
                         account_number_value,
@@ -2037,12 +2070,75 @@ class TruckingAccountUploadView(APIView):
                         account_date_value,
                     )
 
+                    # Check for duplicates based on account_number, account_type, and date in existing database
                     if dedup_key in existing_account_map:
-                        duplicate_count += 1
-                        errors.append(
-                            f"Row {index + 1}: Duplicate entry detected for account {account_number_value} (original created_at {existing_account_map[dedup_key]}). Skipped."
-                        )
-                        continue
+                        # Get all existing entries with their created_at timestamps
+                        existing_created_at_list = existing_account_map[dedup_key]
+                        
+                        # Check existing entries and determine if this is a duplicate
+                        # If ANY entry exists with this account_number, account_type, and date, it's a duplicate
+                        # We only allow duplicates if they're from the SAME upload batch (same created_at within 2 seconds)
+                        has_same_batch_entry = False
+                        has_different_batch_entry = False
+                        existing_created_at_display = None
+                        
+                        # Check all existing entries to see if ANY have a different created_at
+                        for existing_created_at in existing_created_at_list:
+                            # Convert existing_created_at to datetime if needed
+                            if isinstance(existing_created_at, str):
+                                try:
+                                    existing_created_at_dt = pd.to_datetime(existing_created_at)
+                                except:
+                                    # If we can't parse, treat as different batch to be safe
+                                    has_different_batch_entry = True
+                                    existing_created_at_display = str(existing_created_at)
+                                    break
+                            else:
+                                existing_created_at_dt = existing_created_at
+                            
+                            # Compare with current batch timestamp
+                            if isinstance(existing_created_at_dt, (datetime, pd.Timestamp)):
+                                time_diff_seconds = abs((batch_created_at - existing_created_at_dt).total_seconds())
+                                
+                                # If created_at is more than 2 seconds different, it's from a different batch - REJECT
+                                if time_diff_seconds > 2.0:
+                                    has_different_batch_entry = True
+                                    existing_created_at_display = existing_created_at_dt.strftime('%Y-%m-%d %H:%M:%S') if isinstance(existing_created_at_dt, (datetime, pd.Timestamp)) else str(existing_created_at_dt)
+                                    break  # Found different batch duplicate, reject immediately
+                                # If created_at is within 2 seconds, it's from the same batch
+                                else:
+                                    has_same_batch_entry = True
+                                    existing_created_at_display = existing_created_at_dt.strftime('%Y-%m-%d %H:%M:%S') if isinstance(existing_created_at_dt, (datetime, pd.Timestamp)) else str(existing_created_at_dt)
+                            else:
+                                # Can't compare, treat as different batch to be safe
+                                has_different_batch_entry = True
+                                existing_created_at_display = str(existing_created_at_dt) if existing_created_at_dt else 'unknown'
+                                break
+                        
+                        # If entry exists from a DIFFERENT batch (different upload session), reject as duplicate
+                        if has_different_batch_entry:
+                            duplicate_count += 1
+                            original_date = account_date_value.strftime('%Y-%m-%d') if account_date_value else 'None'
+                            errors.append(
+                                f"Row {index + 1}: Duplicate entry detected - Account: {account_number_value}, "
+                                f"Account Type ID: {account_type_instance.id if account_type_instance else 'None'}, "
+                                f"Date: {original_date}. "
+                                f"An existing entry with these details (created at: {existing_created_at_display}) was found from a different upload session. Skipped."
+                            )
+                            continue
+                        
+                        # If we reach here, it means all existing entries have the same created_at (same batch)
+                        # Reject all duplicates from database, regardless of created_at
+                        if has_same_batch_entry:
+                            duplicate_count += 1
+                            original_date = account_date_value.strftime('%Y-%m-%d') if account_date_value else 'None'
+                            errors.append(
+                                f"Row {index + 1}: Duplicate entry detected - Account: {account_number_value}, "
+                                f"Account Type ID: {account_type_instance.id if account_type_instance else 'None'}, "
+                                f"Date: {original_date}. "
+                                f"An existing entry with these details (created at: {existing_created_at_display}) was found in the database. Skipped."
+                            )
+                            continue
 
                     # Resolve Truck by plate number, truck type, and company
                     truck_instance = None
@@ -2130,6 +2226,7 @@ class TruckingAccountUploadView(APIView):
 
                     account.created_at = batch_created_at
                     
+                    # Save the account
                     account.save()
                     created_count += 1
                     
@@ -2142,7 +2239,8 @@ class TruckingAccountUploadView(APIView):
                 'created_count': created_count,
                 'duplicates_skipped': duplicate_count,
                 'parsing_stats': parsing_stats,
-                'errors': errors[:10] if errors else []  # Show first 10 errors
+                'errors': errors[:10] if errors else [],  # Show first 10 errors
+                'warning': f'{duplicate_count} duplicate entries were skipped' if duplicate_count > 0 else None
             }, status=status.HTTP_201_CREATED)
             
         except Exception as e:
