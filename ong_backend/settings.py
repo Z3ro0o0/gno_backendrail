@@ -29,6 +29,11 @@ DEBUG = True
 
 ALLOWED_HOSTS = ['*']
 
+# Railway uses a reverse proxy, so we need to trust the X-Forwarded-Proto header
+# to correctly detect HTTPS and generate HTTPS URLs in pagination links
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_TLS = os.environ.get('USE_TLS', 'true').lower() == 'true'
+
 
 # Application definition
 # Application definition
