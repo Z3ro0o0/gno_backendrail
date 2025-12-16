@@ -229,6 +229,7 @@ CORS_ALLOW_HEADERS = [
 # For file uploads
 CSRF_TRUSTED_ORIGINS = [
     "https://web-production-639bc.up.railway.app",
+    "https://web-production-a85dc.up.railway.app/",
     "https://gno-frontend.onrender.com",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
