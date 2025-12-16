@@ -53,6 +53,7 @@ from .allowance_transfer_view import AllowanceTransferView
 from .clear_trucking_view import ClearTruckingDataView
 from .lock_trucking_view import LockTruckingAccountsView
 from .trucking_account_views import TruckingAccountListView, TruckingAccountDetailView
+from .upload_progress_views import UploadProgressView
 
 urlpatterns = [
     # OTP Authentication
@@ -122,6 +123,7 @@ urlpatterns = [
     path('trucking/preview/', TruckingAccountPreviewView.as_view(), name='trucking-preview'),
     path('trucking/clear/', ClearTruckingDataView.as_view(), name='trucking-clear'),
     path('trucking/lock/', LockTruckingAccountsView.as_view(), name='trucking-lock'),
+    path('trucking/upload-progress/<str:task_id>/', UploadProgressView.as_view(), name='trucking-upload-progress'),
     
     
     path('drivers/summary/', DriversSummaryView.as_view(), name='drivers-summary'),

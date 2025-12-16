@@ -1065,6 +1065,8 @@ class TruckingAccountPreviewView(APIView):
 class TruckingAccountUploadView(APIView):
     """
     POST: Upload Excel file and bulk create trucking accounts with automatic parsing
+    For files with 100+ rows, uses Celery for background processing with progress tracking
+    Smaller files use synchronous processing for faster response
     """
     def post(self, request):
         try:
@@ -1075,6 +1077,61 @@ class TruckingAccountUploadView(APIView):
                 )
             
             file = request.FILES['file']
+            
+            # Check file size to determine if we should use Celery
+            # For files with 100+ rows, use background processing with progress tracking
+            # This prevents connection timeouts and provides better UX
+            USE_CELERY_THRESHOLD = 100
+            
+            # First, read the file to count rows
+            file.seek(0)
+            try:
+                df_preview = pd.read_excel(file)
+                df_preview = df_preview[~df_preview.astype(str).apply(lambda x: x.str.contains('Total for', case=False, na=False)).any(axis=1)]
+                df_preview = df_preview[~df_preview.isnull().all(axis=1)]
+                row_count = len(df_preview)
+            except:
+                row_count = 0
+            
+            file.seek(0)  # Reset file pointer
+            
+            # If file is large, use Celery for background processing
+            if row_count >= USE_CELERY_THRESHOLD:
+                import os
+                import uuid
+                from .tasks import process_trucking_upload
+                
+                # Save file temporarily
+                task_id = str(uuid.uuid4())
+                temp_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'temp_uploads')
+                os.makedirs(temp_dir, exist_ok=True)
+                temp_file_path = os.path.join(temp_dir, f'{task_id}.xlsx')
+                
+                with open(temp_file_path, 'wb+') as temp_file:
+                    for chunk in file.chunks():
+                        temp_file.write(chunk)
+                
+                # Get exclude_preview_indices if provided
+                exclude_preview_indices = None
+                if 'exclude_preview_indices' in request.data:
+                    try:
+                        import json
+                        exclude_preview_indices = json.loads(request.data['exclude_preview_indices'])
+                    except:
+                        pass
+                
+                # Start Celery task
+                task = process_trucking_upload.delay(temp_file_path, exclude_preview_indices, task_id)
+                
+                return Response({
+                    'message': f'Large file detected ({row_count} rows). Processing in background...',
+                    'task_id': task_id,
+                    'use_celery': True,
+                    'row_count': row_count,
+                    'progress_url': f'/api/v1/trucking/upload-progress/{task_id}/'
+                }, status=status.HTTP_202_ACCEPTED)
+            
+            # For smaller files, use synchronous processing (existing code)
             
             # Try reading Excel file without skipping rows first (for newledger.xlsx format)
             # If that fails or columns don't match expected format, try with skiprows=7 for backward compatibility
@@ -1983,6 +2040,10 @@ class TruckingAccountUploadView(APIView):
             duplicate_count = 0
             batch_created_at = timezone.now()
             existing_account_map = {}
+            
+            # Batch size for bulk_create to prevent connection timeouts
+            BATCH_SIZE = 100
+            accounts_to_create = []
 
             existing_accounts = TruckingAccount.objects.all().values(
                 'account_number',
@@ -2226,13 +2287,42 @@ class TruckingAccountUploadView(APIView):
 
                     account.created_at = batch_created_at
                     
-                    # Save the account
-                    account.save()
-                    created_count += 1
+                    # Add to batch instead of saving immediately
+                    accounts_to_create.append(account)
+                    
+                    # Bulk create when batch is full
+                    if len(accounts_to_create) >= BATCH_SIZE:
+                        try:
+                            TruckingAccount.objects.bulk_create(accounts_to_create, ignore_conflicts=False)
+                            created_count += len(accounts_to_create)
+                            accounts_to_create = []  # Clear batch
+                        except Exception as e:
+                            # If bulk_create fails, try individual saves for this batch
+                            for acc in accounts_to_create:
+                                try:
+                                    acc.save()
+                                    created_count += 1
+                                except Exception as save_error:
+                                    errors.append(f"Row {index + 1}: {str(save_error)}")
+                            accounts_to_create = []
                     
                 except Exception as e:
                     errors.append(f"Row {index + 1}: {str(e)}")
                     continue
+            
+            # Create remaining accounts in final batch
+            if accounts_to_create:
+                try:
+                    TruckingAccount.objects.bulk_create(accounts_to_create, ignore_conflicts=False)
+                    created_count += len(accounts_to_create)
+                except Exception as e:
+                    # If bulk_create fails, try individual saves
+                    for acc in accounts_to_create:
+                        try:
+                            acc.save()
+                            created_count += 1
+                        except Exception as save_error:
+                            errors.append(f"Final batch: {str(save_error)}")
             
             return Response({
                 'message': f'Successfully created {created_count} trucking accounts',

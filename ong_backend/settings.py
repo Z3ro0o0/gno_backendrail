@@ -88,28 +88,24 @@ WSGI_APPLICATION = 'ong_backend.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite8',
-        # 'USER': 'postgres',
-        # 'PASSWORD': 'Gwapo123',
-        # 'HOST': 'localhost',
-        # 'PORT': '5432',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'railway',
+        'USER': 'postgres',
+        'PASSWORD': 'zHZNzwesckltAdBBLTbGkwHPpWuGTmBI',
+        'HOST': 'maglev.proxy.rlwy.net',
+        'PORT': '19347',
+        'OPTIONS': {
+            'connect_timeout': 10,
+        },
     }
 }
 
 
+# SQLite fallback (commented out)
 # DATABASES = {
 #     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': os.environ.get('DB_NAME'),
-#         'USER': os.environ.get('DB_USER'),
-#         'PASSWORD': os.environ.get('DB_PASSWORD'),
-#         'HOST': os.environ.get('DB_HOST'),
-#         'PORT': os.environ.get('DB_PORT', '5432'),  # default PostgreSQL port
-#         'OPTIONS': {
-#             'sslmode': os.environ.get('DB_SSLMODE', 'require'),
-#             'channel_binding': os.environ.get('DB_CHANNEL_BINDING', 'require'),
-#         },
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite8',
 #     }
 # }
 
@@ -237,14 +233,53 @@ CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:3000",
 ]
 
+# Celery Configuration
+# Railway provides both REDIS_URL (internal) and REDIS_PUBLIC_URL (external)
+# Use internal URL for services in the same Railway project (faster, more secure)
+REDIS_URL = os.environ.get('REDIS_URL', '')  # Internal URL (redis.railway.internal)
+REDIS_PUBLIC_URL = os.environ.get('REDIS_PUBLIC_URL', '')  # Public URL (for external access)
+
+# Prefer internal URL, fallback to public, then explicit, then localhost
+if REDIS_URL:
+    # Use Railway's internal REDIS_URL, different database numbers for different purposes
+    CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', f'{REDIS_URL}/0')
+    CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', f'{REDIS_URL}/0')
+    REDIS_CACHE_URL = os.environ.get('REDIS_CACHE_URL', f'{REDIS_URL}/1')
+elif REDIS_PUBLIC_URL:
+    # Fallback to public URL if internal not available
+    CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', f'{REDIS_PUBLIC_URL}/0')
+    CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', f'{REDIS_PUBLIC_URL}/0')
+    REDIS_CACHE_URL = os.environ.get('REDIS_CACHE_URL', f'{REDIS_PUBLIC_URL}/1')
+else:
+    # Fallback to explicit URLs or localhost
+    CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+    CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+    REDIS_CACHE_URL = os.environ.get('REDIS_CACHE_URL', os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/1'))
+
 # Cache configuration
+# Use Redis cache for Celery progress tracking (shared between Django and Celery processes)
+# This is required because LocMemCache is process-local and won't work with Celery workers
+# Use Redis cache (Django 4.0+ has built-in Redis support)
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'unique-snowflake',
-        'TIMEOUT': 300,  # 5 minutes default
-        'OPTIONS': {
-            'MAX_ENTRIES': 1000,
-        }
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': REDIS_CACHE_URL,
+        'KEY_PREFIX': 'ong_backend',
+        'TIMEOUT': 3600,  # 1 hour default
     }
 }
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
+CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutes
+CELERY_RESULT_EXPIRES = 3600  # 1 hour
+
+# Windows compatibility: Use solo pool instead of prefork (which doesn't work on Windows)
+import sys
+if sys.platform == 'win32':
+    CELERY_WORKER_POOL = 'solo'
+else:
+    CELERY_WORKER_POOL = 'prefork'

@@ -229,13 +229,13 @@ class TripsView(APIView):
                     trips[trip_key]['taxes_permits_licenses_expense'] += float(account.final_total)
             
             # Calculate front_and_back_load_amount for each trip
-            # Only include trips that have a route
+            # Include all trips (route is optional - can be set later)
             trips_list = []
             for trip_data in trips.values():
-                # Skip trips without a route or with 'nan' as route
-                route = str(trip_data['trip_route']).strip().lower()
-                if not trip_data['trip_route'] or route == '' or route == 'nan':
-                    continue
+                # Skip trips with 'nan' as route, but allow empty routes
+                route = str(trip_data.get('trip_route', '')).strip().lower()
+                if route == 'nan':
+                    trip_data['trip_route'] = ''  # Set to empty string instead of skipping
                     
                 trip_data['front_and_back_load_amount'] = (
                     trip_data['front_load_amount'] + trip_data['back_load_amount']
@@ -245,10 +245,8 @@ class TripsView(APIView):
             # Sort by date and plate number
             trips_list.sort(key=lambda x: (x['date'], x['plate_number']))
             
-            return Response({
-                'trips': trips_list,
-                'total_trips': len(trips_list)
-            }, status=status.HTTP_200_OK)
+            # Return array directly as frontend expects an array
+            return Response(trips_list, status=status.HTTP_200_OK)
             
         except Exception as e:
             return Response(
