@@ -1097,19 +1097,19 @@ class TruckingAccountUploadView(APIView):
             
             # If file is large, use Celery for background processing
             if row_count >= USE_CELERY_THRESHOLD:
-                import os
                 import uuid
+                import base64
+                from django.core.cache import cache
                 from .tasks import process_trucking_upload
                 
-                # Save file temporarily
+                # Generate task ID
                 task_id = str(uuid.uuid4())
-                temp_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'temp_uploads')
-                os.makedirs(temp_dir, exist_ok=True)
-                temp_file_path = os.path.join(temp_dir, f'{task_id}.xlsx')
                 
-                with open(temp_file_path, 'wb+') as temp_file:
-                    for chunk in file.chunks():
-                        temp_file.write(chunk)
+                # Read file content and store in Redis (base64 encoded)
+                file_content = file.read()
+                file_key = f'upload_file_{task_id}'
+                # Store file in Redis with 1 hour expiry (base64 encoded for safe storage)
+                cache.set(file_key, base64.b64encode(file_content).decode('utf-8'), timeout=3600)
                 
                 # Get exclude_preview_indices if provided
                 exclude_preview_indices = None
@@ -1120,8 +1120,8 @@ class TruckingAccountUploadView(APIView):
                     except:
                         pass
                 
-                # Start Celery task
-                task = process_trucking_upload.delay(temp_file_path, exclude_preview_indices, task_id)
+                # Start Celery task (pass task_id, Celery will fetch file from Redis)
+                task = process_trucking_upload.delay(task_id, exclude_preview_indices)
                 
                 return Response({
                     'message': f'Large file detected ({row_count} rows). Processing in background...',
