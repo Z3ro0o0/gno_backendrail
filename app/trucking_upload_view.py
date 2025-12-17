@@ -1099,17 +1099,36 @@ class TruckingAccountUploadView(APIView):
             if row_count >= USE_CELERY_THRESHOLD:
                 import uuid
                 import base64
+                import logging
                 from django.core.cache import cache
                 from .tasks import process_trucking_upload
                 
+                logger = logging.getLogger(__name__)
+                
                 # Generate task ID
                 task_id = str(uuid.uuid4())
+                
+                # Set initial progress BEFORE dispatching task (so frontend doesn't get 404)
+                progress_key = f'upload_progress_{task_id}'
+                cache.set(progress_key, {
+                    'status': 'queued',
+                    'progress': 0,
+                    'total_rows': row_count,
+                    'processed_rows': 0,
+                    'created_count': 0,
+                    'duplicate_count': 0,
+                    'error_count': 0,
+                    'errors': [],
+                    'message': 'Upload queued, waiting for worker...'
+                }, timeout=3600)
                 
                 # Read file content and store in Redis (base64 encoded)
                 file_content = file.read()
                 file_key = f'upload_file_{task_id}'
                 # Store file in Redis with 1 hour expiry (base64 encoded for safe storage)
                 cache.set(file_key, base64.b64encode(file_content).decode('utf-8'), timeout=3600)
+                
+                logger.info(f"Stored file in Redis with key: {file_key}, size: {len(file_content)} bytes")
                 
                 # Get exclude_preview_indices if provided
                 exclude_preview_indices = None
@@ -1121,7 +1140,24 @@ class TruckingAccountUploadView(APIView):
                         pass
                 
                 # Start Celery task (pass task_id, Celery will fetch file from Redis)
-                task = process_trucking_upload.delay(task_id, exclude_preview_indices)
+                try:
+                    task = process_trucking_upload.delay(task_id, exclude_preview_indices)
+                    logger.info(f"Celery task dispatched: {task.id} for upload {task_id}")
+                except Exception as e:
+                    logger.error(f"Failed to dispatch Celery task: {str(e)}")
+                    # Update progress to show error
+                    cache.set(progress_key, {
+                        'status': 'error',
+                        'progress': 0,
+                        'total_rows': row_count,
+                        'processed_rows': 0,
+                        'created_count': 0,
+                        'duplicate_count': 0,
+                        'error_count': 1,
+                        'errors': [f'Failed to start background task: {str(e)}'],
+                        'message': f'Failed to start background task: {str(e)}'
+                    }, timeout=3600)
+                    raise
                 
                 return Response({
                     'message': f'Large file detected ({row_count} rows). Processing in background...',

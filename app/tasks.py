@@ -55,11 +55,17 @@ def process_trucking_upload(self, task_id, exclude_preview_indices=None):
     File content is retrieved from Redis (stored by the upload view)
     """
     import base64
+    import logging
     from io import BytesIO
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"[CELERY TASK STARTED] task_id={task_id}")
+    print(f"[CELERY TASK STARTED] task_id={task_id}")  # Also print for visibility in logs
     
     try:
         # Set initial progress
         progress_key = f'upload_progress_{task_id}'
+        logger.info(f"Setting progress for key: {progress_key}")
         cache.set(progress_key, {
             'status': 'processing',
             'progress': 0,
@@ -71,6 +77,7 @@ def process_trucking_upload(self, task_id, exclude_preview_indices=None):
             'errors': [],
             'message': 'Starting upload...'
         }, timeout=3600)
+        logger.info(f"Progress set successfully")
         
         # Retrieve file content from Redis
         file_key = f'upload_file_{task_id}'
