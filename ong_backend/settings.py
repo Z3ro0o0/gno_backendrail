@@ -286,6 +286,21 @@ CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
 CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutes
 CELERY_RESULT_EXPIRES = 3600  # 1 hour
 
+# Broker connection retry settings (for Railway/production resilience)
+CELERY_BROKER_CONNECTION_RETRY = True
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_BROKER_CONNECTION_MAX_RETRIES = None  # Retry indefinitely
+CELERY_BROKER_CONNECTION_TIMEOUT = 30  # 30 seconds timeout
+
+# Result backend retry settings
+CELERY_RESULT_BACKEND_ALWAYS_RETRY = True
+CELERY_RESULT_BACKEND_MAX_RETRIES = None  # Retry indefinitely
+
+# Redis-specific settings for better connection handling
+CELERY_REDIS_SOCKET_TIMEOUT = 30
+CELERY_REDIS_SOCKET_CONNECT_TIMEOUT = 30
+CELERY_REDIS_RETRY_ON_TIMEOUT = True
+
 # Windows compatibility: Use solo pool instead of prefork (which doesn't work on Windows)
 import sys
 if sys.platform == 'win32':
