@@ -1097,38 +1097,19 @@ class TruckingAccountUploadView(APIView):
             
             # If file is large, use Celery for background processing
             if row_count >= USE_CELERY_THRESHOLD:
+                import os
                 import uuid
-                import base64
-                import logging
-                from django.core.cache import cache
                 from .tasks import process_trucking_upload
                 
-                logger = logging.getLogger(__name__)
-                
-                # Generate task ID
+                # Save file temporarily
                 task_id = str(uuid.uuid4())
+                temp_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'temp_uploads')
+                os.makedirs(temp_dir, exist_ok=True)
+                temp_file_path = os.path.join(temp_dir, f'{task_id}.xlsx')
                 
-                # Set initial progress BEFORE dispatching task (so frontend doesn't get 404)
-                progress_key = f'upload_progress_{task_id}'
-                cache.set(progress_key, {
-                    'status': 'queued',
-                    'progress': 0,
-                    'total_rows': row_count,
-                    'processed_rows': 0,
-                    'created_count': 0,
-                    'duplicate_count': 0,
-                    'error_count': 0,
-                    'errors': [],
-                    'message': 'Upload queued, waiting for worker...'
-                }, timeout=3600)
-                
-                # Read file content and store in Redis (base64 encoded)
-                file_content = file.read()
-                file_key = f'upload_file_{task_id}'
-                # Store file in Redis with 1 hour expiry (base64 encoded for safe storage)
-                cache.set(file_key, base64.b64encode(file_content).decode('utf-8'), timeout=3600)
-                
-                logger.info(f"Stored file in Redis with key: {file_key}, size: {len(file_content)} bytes")
+                with open(temp_file_path, 'wb+') as temp_file:
+                    for chunk in file.chunks():
+                        temp_file.write(chunk)
                 
                 # Get exclude_preview_indices if provided
                 exclude_preview_indices = None
@@ -1139,25 +1120,8 @@ class TruckingAccountUploadView(APIView):
                     except:
                         pass
                 
-                # Start Celery task (pass task_id, Celery will fetch file from Redis)
-                try:
-                    task = process_trucking_upload.delay(task_id, exclude_preview_indices)
-                    logger.info(f"Celery task dispatched: {task.id} for upload {task_id}")
-                except Exception as e:
-                    logger.error(f"Failed to dispatch Celery task: {str(e)}")
-                    # Update progress to show error
-                    cache.set(progress_key, {
-                        'status': 'error',
-                        'progress': 0,
-                        'total_rows': row_count,
-                        'processed_rows': 0,
-                        'created_count': 0,
-                        'duplicate_count': 0,
-                        'error_count': 1,
-                        'errors': [f'Failed to start background task: {str(e)}'],
-                        'message': f'Failed to start background task: {str(e)}'
-                    }, timeout=3600)
-                    raise
+                # Start Celery task
+                task = process_trucking_upload.delay(temp_file_path, exclude_preview_indices, task_id)
                 
                 return Response({
                     'message': f'Large file detected ({row_count} rows). Processing in background...',

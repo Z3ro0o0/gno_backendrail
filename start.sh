@@ -4,10 +4,6 @@
 # Exit on error
 set -e
 
-# Create temp_uploads directory if it doesn't exist
-echo "Creating temp_uploads directory..."
-mkdir -p /app/temp_uploads
-
 # Start Celery worker in the background
 echo "Starting Celery worker..."
 celery -A ong_backend worker --loglevel=info --concurrency=2 &

@@ -1,6 +1,7 @@
 """
 Celery tasks for background processing
 """
+import os
 import pandas as pd
 import json
 from celery import shared_task
@@ -48,24 +49,14 @@ def standardize_plate_number(plate_number):
 
 
 @shared_task(bind=True)
-def process_trucking_upload(self, task_id, exclude_preview_indices=None):
+def process_trucking_upload(self, file_path, exclude_preview_indices=None, task_id=None):
     """
     Background task to process trucking account upload
     This includes ALL the parsing logic from the synchronous upload view
-    File content is retrieved from Redis (stored by the upload view)
     """
-    import base64
-    import logging
-    from io import BytesIO
-    
-    logger = logging.getLogger(__name__)
-    logger.info(f"[CELERY TASK STARTED] task_id={task_id}")
-    print(f"[CELERY TASK STARTED] task_id={task_id}")  # Also print for visibility in logs
-    
     try:
         # Set initial progress
         progress_key = f'upload_progress_{task_id}'
-        logger.info(f"Setting progress for key: {progress_key}")
         cache.set(progress_key, {
             'status': 'processing',
             'progress': 0,
@@ -77,38 +68,22 @@ def process_trucking_upload(self, task_id, exclude_preview_indices=None):
             'errors': [],
             'message': 'Starting upload...'
         }, timeout=3600)
-        logger.info(f"Progress set successfully")
-        
-        # Retrieve file content from Redis
-        file_key = f'upload_file_{task_id}'
-        file_content_b64 = cache.get(file_key)
-        if not file_content_b64:
-            raise Exception(f'File content not found in cache for task {task_id}')
-        
-        # Decode base64 and create BytesIO object
-        file_content = base64.b64decode(file_content_b64)
-        file_buffer = BytesIO(file_content)
-        
-        # Delete file from Redis after retrieving (cleanup)
-        cache.delete(file_key)
         
         # Read Excel file (try without skiprows first, then with skiprows=7 for backward compatibility)
         try:
-            df = pd.read_excel(file_buffer)
+            df = pd.read_excel(file_path)
             df.columns = df.columns.str.strip()
             # Check if we have expected columns for new format
             has_new_format = any('account' in col.lower() for col in df.columns) and \
                            any('type' in col.lower() and 'account' not in col.lower() and 'item' not in col.lower() for col in df.columns)
             
             if not has_new_format:
-                # Reset buffer and try with skiprows
-                file_buffer.seek(0)
-                df = pd.read_excel(file_buffer, skiprows=7)
+                # Reset and try with skiprows
+                df = pd.read_excel(file_path, skiprows=7)
                 df.columns = df.columns.str.strip()
         except:
             # If reading fails, try with skiprows for backward compatibility
-            file_buffer.seek(0)
-            df = pd.read_excel(file_buffer, skiprows=7)
+            df = pd.read_excel(file_path, skiprows=7)
             df.columns = df.columns.str.strip()
         
         # Remove rows with 'Total for' in ANY column BEFORE parsing
@@ -996,6 +971,10 @@ def process_trucking_upload(self, task_id, exclude_preview_indices=None):
             'parsing_stats': parsing_stats
         }, timeout=3600)
         
+        # Clean up file
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        
         return {
             'status': 'completed',
             'created_count': created_count,
@@ -1021,5 +1000,9 @@ def process_trucking_upload(self, task_id, exclude_preview_indices=None):
             'errors': [error_msg],
             'message': f'Upload failed: {str(e)}'
         }, timeout=3600)
+        
+        # Clean up file
+        if os.path.exists(file_path):
+            os.remove(file_path)
         
         raise

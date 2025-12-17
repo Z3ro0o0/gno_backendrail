@@ -14,11 +14,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy project files
 COPY . .
 
-# Create temp_uploads directory for file uploads
-RUN mkdir -p /app/temp_uploads
-
-# Make start script executable
-RUN chmod +x start.sh
-
-# Run using start.sh which starts both Django and Celery
-CMD ["bash", "start.sh"]
+# Run Django with Gunicorn using Railway's PORT variable
+CMD ["/bin/bash", "-c", "gunicorn run:app –bind 0.0.0.0:8080"]
