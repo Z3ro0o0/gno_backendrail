@@ -102,6 +102,8 @@ DATABASES = {
         'OPTIONS': {
             'connect_timeout': 10,
         },
+        'CONN_MAX_AGE': 60,  # Close connections after 60 seconds of idle time
+        'CONN_HEALTH_CHECKS': True,  # Check connection health before using (Django 4.1+)
     }
 }
 
