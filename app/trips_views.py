@@ -128,7 +128,11 @@ class TripsView(APIView):
                     trips[trip_key]['trip_route'] = account.route
                     trips[trip_key]['driver'] = account.driver
                     trips[trip_key]['reference_number'] = ref_num
-                    trips[trip_key]['front_load'] = account.front_load
+                    
+                    # Set front_load name from income record if not already set
+                    if not trips[trip_key]['front_load'] and account.front_load:
+                        trips[trip_key]['front_load'] = str(account.front_load)
+                    
                     trips[trip_key]['remarks'] = account.remarks
                     
                     # Check if front_load has a meaningful value (not empty, 'n', 'nan', etc.)
@@ -155,8 +159,8 @@ class TripsView(APIView):
                         trips[trip_key]['back_load_amount'] = 0  # Explicitly set to 0
                         trips[trip_key]['front_load_reference_number'] = ref_num
                     else:
-                        # Neither has meaningful value - skip this entry
-                        continue
+                        # Neither has meaningful value - still keep the names if they exist
+                        pass
                 else:
                     # Multiple entries - first is front_load, rest are back_load
                     for i, account in enumerate(accounts):
@@ -165,7 +169,10 @@ class TripsView(APIView):
                         trips[trip_key]['date'] = date.strftime('%Y-%m-%d')
                         trips[trip_key]['trip_route'] = account.route
                         trips[trip_key]['driver'] = account.driver
-                        trips[trip_key]['front_load'] = account.front_load
+                        
+                        if not trips[trip_key]['front_load'] and account.front_load:
+                            trips[trip_key]['front_load'] = str(account.front_load)
+                            
                         trips[trip_key]['remarks'] = account.remarks
                         
                         if i == 0:
@@ -178,7 +185,7 @@ class TripsView(APIView):
                             trips[trip_key]['back_load_reference_number'] = ref_num
             
             # Process Fuel Accounts
-            fuel_accounts = FuelAccount.objects.select_related('plate_number').all()
+            fuel_accounts = FuelAccount.objects.select_related('plate_number', 'front_load', 'back_load').all()
             for account in fuel_accounts:
                 trip_key = (account.plate_number.number, account.date)
                 if trip_key in trips or not trips[trip_key]['plate_number']:
@@ -190,6 +197,8 @@ class TripsView(APIView):
                         trips[trip_key]['driver'] = account.driver
                     if not trips[trip_key]['trip_route']:
                         trips[trip_key]['trip_route'] = account.route
+                    if not trips[trip_key]['front_load'] and account.front_load:
+                        trips[trip_key]['front_load'] = str(account.front_load)
             
             # Process Allowance Accounts
             allowance_accounts = AllowanceAccount.objects.select_related('plate_number').all()
@@ -227,6 +236,16 @@ class TripsView(APIView):
                     trips[trip_key]['plate_number'] = account.plate_number.number
                     trips[trip_key]['date'] = account.date.strftime('%Y-%m-%d')
                     trips[trip_key]['taxes_permits_licenses_expense'] += float(account.final_total)
+            
+            # Also process TruckingAccount for any missing metadata (like front_load set via modal)
+            trucking_accounts = TruckingAccount.objects.filter(is_locked=False).select_related('truck', 'front_load', 'back_load').all()
+            for account in trucking_accounts:
+                if not account.truck or not account.truck.plate_number:
+                    continue
+                trip_key = (account.truck.plate_number, account.date)
+                if trip_key in trips:
+                    if not trips[trip_key]['front_load'] and account.front_load:
+                        trips[trip_key]['front_load'] = str(account.front_load.name)
             
             # Calculate front_and_back_load_amount for each trip
             # Include all trips (route is optional - can be set later)
