@@ -46,11 +46,29 @@ class AccountsDetailView(APIView):
                 }
             }
             
+            # Fetch ALL records in a single optimized query
+            # Using select_related to avoid N+1 queries - this fetches all related objects in one query
+            all_records = TruckingAccount.objects.select_related(
+                'driver', 'route', 'truck', 'truck__truck_type', 'account_type', 'front_load', 'back_load'
+            ).order_by('id')  # Consistent ordering for predictable results
+            
+            # Group records by account type in Python (faster than multiple DB queries)
+            records_by_account_type = {}
+            for record in all_records:
+                account_type_name = None
+                if record.account_type:
+                    account_type_name = record.account_type.name if hasattr(record.account_type, 'name') else str(record.account_type)
+                
+                if account_type_name:
+                    if account_type_name not in records_by_account_type:
+                        records_by_account_type[account_type_name] = []
+                    records_by_account_type[account_type_name].append(record)
+            
             accounts_data = {}
             
             for key, mapping in account_mappings.items():
-                # Get all records for this account type with related objects
-                records = TruckingAccount.objects.filter(account_type__name=mapping['account_type']).select_related('driver', 'route', 'truck', 'truck__truck_type')
+                # Get records for this account type from the pre-grouped data
+                records = records_by_account_type.get(mapping['account_type'], [])
                 
                 # Convert to the format expected by frontend
                 entries = []
